@@ -165,17 +165,23 @@ export class PrebuildManager {
 
         const project = await this.projectService.getProject(user.id, projectId);
 
-        const branchDetails = !!branchName
-            ? await this.projectService.getBranchDetails(user, project, branchName)
-            : (await this.projectService.getBranchDetails(user, project)).filter((b) => b.isDefault);
-        if (branchDetails.length !== 1) {
-            log.debug({ userId: user.id }, "Cannot find branch details.", { project, branchName });
-            throw new ApplicationError(
-                ErrorCodes.NOT_FOUND,
-                `Could not find ${!branchName ? "a default branch" : `branch '${branchName}'`} in repository ${
-                    project.cloneUrl
-                }`,
-            );
+        let branchDetails: Project.BranchDetails[] = [];
+        try {
+            branchDetails = branchName
+                ? await this.projectService.getBranchDetails(user, project, branchName)
+                : (await this.projectService.getBranchDetails(user, project)).filter((b) => b.isDefault);
+        } catch (e) {
+            log.error(e);
+        } finally {
+            if (branchDetails.length !== 1) {
+                log.debug({ userId: user.id }, "Cannot find branch details.", { project, branchName });
+                throw new ApplicationError(
+                    ErrorCodes.NOT_FOUND,
+                    `Could not find ${!branchName ? "a default branch" : `branch '${branchName}'`} in repository ${
+                        project.cloneUrl
+                    }`,
+                );
+            }
         }
         const contextURL = branchDetails[0].url;
 
@@ -630,7 +636,7 @@ export class PrebuildManager {
         return false;
     }
 
-    public async watchPrebuildLogs(userId: string, prebuildId: string, onLog: (message: string) => void) {
+    public async watchPrebuildLogs(userId: string, prebuildId: string, onLog: (message: string) => Promise<void>) {
         const { workspaceId, organizationId } = await this.waitUntilPrebuildWorkspaceCreated(userId, prebuildId);
         if (!workspaceId || !organizationId) {
             throw new ApplicationError(ErrorCodes.PRECONDITION_FAILED, "prebuild workspace not found");
@@ -654,7 +660,7 @@ export class PrebuildManager {
                             },
                         );
                         for await (const message of imageBuildIt) {
-                            onLog(message);
+                            await onLog(message);
                         }
                     }
                     break;
@@ -698,18 +704,23 @@ export class PrebuildManager {
                                         })
                                         .catch((err) => {
                                             console.debug("error streaming running headless logs", err);
-                                            throw new ApplicationError(
-                                                ErrorCodes.INTERNAL_SERVER_ERROR,
-                                                "error streaming running headless logs",
+                                            sink.fail(
+                                                new ApplicationError(
+                                                    ErrorCodes.INTERNAL_SERVER_ERROR,
+                                                    "error streaming running headless logs",
+                                                ),
                                             );
                                         });
                                     return () => {};
                                 } else {
                                     if (!downloadUrl) {
-                                        throw new ApplicationError(
-                                            ErrorCodes.PRECONDITION_FAILED,
-                                            "cannot fetch prebuild log",
+                                        sink.fail(
+                                            new ApplicationError(
+                                                ErrorCodes.PRECONDITION_FAILED,
+                                                "cannot fetch prebuild log",
+                                            ),
                                         );
+                                        return;
                                     }
                                     const cancel = onDownloadPrebuildLogsUrl(
                                         downloadUrl,
@@ -739,7 +750,7 @@ export class PrebuildManager {
                     );
 
                     for await (const message of it) {
-                        onLog(message);
+                        await onLog(message);
                     }
                     // we don't care the case phase updates from `running` to `stopped` because their logs are the same
                     // this may cause some logs lost, but better than duplicate?

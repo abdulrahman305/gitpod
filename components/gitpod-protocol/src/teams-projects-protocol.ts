@@ -25,6 +25,8 @@ export interface ProjectSettings {
      * Controls workspace class restriction for this project, the list is a NOT ALLOW LIST. Empty array to allow all kind of workspace classes
      */
     restrictedWorkspaceClasses?: string[];
+
+    restrictedEditorNames?: string[];
 }
 export namespace PrebuildSettings {
     export type BranchStrategy = "default-branch" | "all-branches" | "matched-branches";
@@ -204,6 +206,10 @@ export interface OrganizationSettings {
 
     // empty array to allow all kind of workspace classes
     allowedWorkspaceClasses?: string[] | null;
+
+    pinnedEditorVersions?: { [key: string]: string } | null;
+
+    restrictedEditorNames?: string[] | null;
 }
 
 export type TeamMemberRole = OrgMemberRole;

@@ -408,10 +408,10 @@ export class PublicAPIConverter {
         return metadata;
     }
 
-    toWorkspaceConditions(conditions: WorkspaceInstanceConditions): WorkspaceStatus_WorkspaceConditions {
+    toWorkspaceConditions(conditions: WorkspaceInstanceConditions | undefined): WorkspaceStatus_WorkspaceConditions {
         const result = new WorkspaceStatus_WorkspaceConditions({
-            failed: conditions.failed,
-            timeout: conditions.timeout,
+            failed: conditions?.failed,
+            timeout: conditions?.timeout,
         });
         // TODO: failedReason
         return result;
@@ -927,7 +927,9 @@ export class PublicAPIConverter {
     }
 
     fromWorkspaceSettings(settings?: DeepPartial<WorkspaceSettings>) {
-        const result: Partial<Pick<ProjectSettings, "workspaceClasses" | "restrictedWorkspaceClasses">> = {};
+        const result: Partial<
+            Pick<ProjectSettings, "workspaceClasses" | "restrictedWorkspaceClasses" | "restrictedEditorNames">
+        > = {};
         if (settings?.workspaceClass) {
             result.workspaceClasses = {
                 regular: settings.workspaceClass,
@@ -936,6 +938,10 @@ export class PublicAPIConverter {
 
         if (settings?.restrictedWorkspaceClasses) {
             result.restrictedWorkspaceClasses = settings.restrictedWorkspaceClasses.filter((e) => !!e) as string[];
+        }
+
+        if (settings?.restrictedEditorNames) {
+            result.restrictedEditorNames = settings.restrictedEditorNames.filter((e) => !!e) as string[];
         }
         return result;
     }
@@ -976,7 +982,7 @@ export class PublicAPIConverter {
 
     fromPartialConfiguration(configuration: PartialConfiguration): PartialProject {
         const prebuilds = this.fromPartialPrebuildSettings(configuration.prebuildSettings);
-        const { workspaceClasses, restrictedWorkspaceClasses } = this.fromWorkspaceSettings(
+        const { workspaceClasses, restrictedWorkspaceClasses, restrictedEditorNames } = this.fromWorkspaceSettings(
             configuration.workspaceSettings,
         );
 
@@ -998,6 +1004,9 @@ export class PublicAPIConverter {
         if (restrictedWorkspaceClasses) {
             result.settings!.restrictedWorkspaceClasses = restrictedWorkspaceClasses;
         }
+        if (restrictedEditorNames) {
+            result.settings!.restrictedEditorNames = restrictedEditorNames;
+        }
 
         return result;
     }
@@ -1007,6 +1016,8 @@ export class PublicAPIConverter {
             workspaceSharingDisabled: !!settings.workspaceSharingDisabled,
             defaultWorkspaceImage: settings.defaultWorkspaceImage || undefined,
             allowedWorkspaceClasses: settings.allowedWorkspaceClasses || [],
+            pinnedEditorVersions: settings.pinnedEditorVersions || {},
+            restrictedEditorNames: settings.restrictedEditorNames || [],
         });
     }
 
@@ -1053,6 +1064,9 @@ export class PublicAPIConverter {
         }
         if (projectSettings?.restrictedWorkspaceClasses) {
             result.restrictedWorkspaceClasses = projectSettings.restrictedWorkspaceClasses;
+        }
+        if (projectSettings?.restrictedEditorNames) {
+            result.restrictedEditorNames = projectSettings.restrictedEditorNames;
         }
         return result;
     }

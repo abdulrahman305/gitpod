@@ -4,7 +4,7 @@
  * See License.AGPL.txt in the project root for license information.
  */
 
-import { SuggestedRepository } from "@gitpod/gitpod-protocol";
+import { SuggestedRepository } from "@gitpod/public-api/lib/gitpod/v1/scm_pb";
 import { SelectAccountPayload } from "@gitpod/gitpod-protocol/lib/auth";
 import { ApplicationError, ErrorCodes } from "@gitpod/gitpod-protocol/lib/messaging/error";
 import { Deferred } from "@gitpod/gitpod-protocol/lib/util/deferred";
@@ -29,7 +29,7 @@ import { useWorkspaceContext } from "../data/workspaces/resolve-context-query";
 import { useDirtyState } from "../hooks/use-dirty-state";
 import { openAuthorizeWindow } from "../provider-utils";
 import { gitpodHostUrl } from "../service/service";
-import { StartWorkspaceError } from "../start/StartPage";
+import { StartPage, StartWorkspaceError } from "../start/StartPage";
 import { VerifyModal } from "../start/VerifyModal";
 import { StartWorkspaceOptions } from "../start/start-workspace-options";
 import { UserContext, useCurrentUser } from "../user-context";
@@ -50,6 +50,9 @@ import { EditorReference } from "@gitpod/public-api/lib/gitpod/v1/editor_pb";
 import { converter } from "../service/public-api";
 import { useUpdateCurrentUserMutation } from "../data/current-user/update-mutation";
 import { useAllowedWorkspaceClassesMemo } from "../data/workspaces/workspace-classes-query";
+import Menu from "../menu/Menu";
+import { useOrgSettingsQuery } from "../data/organizations/org-settings-query";
+import { useAllowedWorkspaceEditorsMemo } from "../data/ide-options/ide-options-query";
 
 type NextLoadOption = "searchParams" | "autoStart" | "allDone";
 
@@ -75,12 +78,26 @@ export function CreateWorkspacePage() {
             ? props.ideSettings.useLatestVersion
             : user?.editorSettings?.version === "latest";
     const [useLatestIde, setUseLatestIde] = useState(defaultLatestIde);
-    const defaultIde = user?.editorSettings?.name;
-    const [selectedIde, setSelectedIde, selectedIdeIsDirty] = useDirtyState(defaultIde);
+    // Note: it has data fetching and UI rendering race between the updating of `selectedProjectId` and `selectedIde`
+    // We have to stored the using repositoryId locally so that we can know selectedIde is updated because if which repo
+    // so that it doesn't show ide error messages in middle state
+    const [defaultIdeSource, setDefaultIdeSource] = useState<string | undefined>(selectedProjectID);
+    const {
+        computedDefault: computedDefaultEditor,
+        usingConfigurationId,
+        availableOptions: availableEditorOptions,
+    } = useAllowedWorkspaceEditorsMemo(selectedProjectID, {
+        userDefault: user?.editorSettings?.name,
+        filterOutDisabled: true,
+    });
+    const defaultIde = computedDefaultEditor;
+    const [selectedIde, setSelectedIde, selectedIdeIsDirty] = useDirtyState<string | undefined>(defaultIde);
     const { computedDefaultClass, data: allowedWorkspaceClasses } = useAllowedWorkspaceClassesMemo(selectedProjectID);
     const defaultWorkspaceClass = props.workspaceClass ?? computedDefaultClass;
+    const { data: orgSettings } = useOrgSettingsQuery();
     const [selectedWsClass, setSelectedWsClass, selectedWsClassIsDirty] = useDirtyState(defaultWorkspaceClass);
     const [errorWsClass, setErrorWsClass] = useState<React.ReactNode | undefined>(undefined);
+    const [errorIde, setErrorIde] = useState<React.ReactNode | undefined>(undefined);
     const [contextURL, setContextURL] = useState<string | undefined>(
         StartWorkspaceOptions.parseContextUrl(location.hash),
     );
@@ -153,9 +170,11 @@ export function CreateWorkspacePage() {
             setAutostart(false);
             // TODO: consider storing SuggestedRepository as state vs. discrete props
             setContextURL(repo?.url);
-            setSelectedProjectID(repo?.projectId);
+            setSelectedProjectID(repo?.configurationId);
             // TOOD: consider dropping this - it's a lossy conversion
             history.replace(`#${repo?.url}`);
+            // reset load options
+            setNextLoadOption("searchParams");
         },
         [history],
     );
@@ -167,7 +186,6 @@ export function CreateWorkspacePage() {
         },
         [setSelectedIde, setUseLatestIde],
     );
-    const [errorIde, setErrorIde] = useState<string | undefined>(undefined);
 
     const existingWorkspaces = useMemo(() => {
         if (!workspaces.data || !workspaceContext.data) {
@@ -340,6 +358,7 @@ export function CreateWorkspacePage() {
                 }
             }
         }
+        setDefaultIdeSource(usingConfigurationId);
         setNextLoadOption("allDone");
         // we only update the remembered options when the workspaceContext changes
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -413,95 +432,118 @@ export function CreateWorkspacePage() {
                     <div className="text-gray-500 text-center text-base">
                         Start a new workspace with the following options.
                     </div>
-                    <AuthorizeGit className="mt-12 border-2 border-gray-100 dark:border-gray-800 rounded-lg" />
+                    <AuthorizeGit
+                        refetch={workspaceContext.refetch}
+                        className="mt-12 border-2 border-gray-100 dark:border-gray-800 rounded-lg"
+                    />
                 </div>
             </div>
         );
     }
 
+    if (
+        (createWorkspaceMutation.isStarting || autostart) &&
+        !(createWorkspaceMutation.error || workspaceContext.error)
+    ) {
+        return <StartPage phase={WorkspacePhase_Phase.PREPARING} />;
+    }
+
     return (
-        <div className="flex flex-col mt-32 mx-auto ">
-            <div className="flex flex-col max-h-screen max-w-xl mx-auto items-center w-full">
-                <Heading1>New Workspace</Heading1>
-                <div className="text-gray-500 text-center text-base">
-                    Create a new workspace in the{" "}
-                    <span className="font-semibold text-gray-600 dark:text-gray-400">{currentOrg?.name}</span>{" "}
-                    organization.
-                </div>
-
-                <div className="-mx-6 px-6 mt-6 w-full">
-                    {createWorkspaceMutation.error || workspaceContext.error ? (
-                        <ErrorMessage
-                            error={
-                                (createWorkspaceMutation.error as StartWorkspaceError) ||
-                                (workspaceContext.error as StartWorkspaceError)
-                            }
-                            setSelectAccountError={setSelectAccountError}
-                            reset={() => {
-                                createWorkspaceMutation.reset();
-                            }}
-                        />
-                    ) : null}
-
-                    <InputField>
-                        <RepositoryFinder
-                            onChange={handleContextURLChange}
-                            selectedContextURL={contextURL}
-                            selectedConfigurationId={selectedProjectID}
-                            expanded={!contextURL}
-                            disabled={createWorkspaceMutation.isStarting}
-                        />
-                    </InputField>
-
-                    <InputField error={errorIde}>
-                        <SelectIDEComponent
-                            onSelectionChange={onSelectEditorChange}
-                            setError={setErrorIde}
-                            selectedIdeOption={selectedIde}
-                            useLatest={useLatestIde}
-                            disabled={createWorkspaceMutation.isStarting}
-                            loading={workspaceContext.isLoading}
-                        />
-                    </InputField>
-
-                    <InputField error={errorWsClass}>
-                        <SelectWorkspaceClassComponent
-                            selectedConfigurationId={selectedProjectID}
-                            onSelectionChange={setSelectedWsClass}
-                            setError={setErrorWsClass}
-                            selectedWorkspaceClass={selectedWsClass}
-                            disabled={createWorkspaceMutation.isStarting}
-                            loading={workspaceContext.isLoading}
-                        />
-                    </InputField>
-                </div>
-                <div className="w-full flex justify-end mt-3 space-x-2 px-6">
-                    <LoadingButton
-                        onClick={onClickCreate}
-                        autoFocus={true}
-                        className="w-full"
-                        loading={createWorkspaceMutation.isStarting || !!autostart}
-                        disabled={continueButtonDisabled}
-                    >
-                        {createWorkspaceMutation.isStarting ? "Opening Workspace ..." : "Continue"}
-                    </LoadingButton>
-                </div>
-                {existingWorkspaces.length > 0 && !createWorkspaceMutation.isStarting && (
-                    <div className="w-full flex flex-col justify-end px-6">
-                        <p className="mt-6 text-center text-base">Running workspaces on this revision</p>
-                        {existingWorkspaces.map((w) => {
-                            return (
-                                <a
-                                    key={w.id}
-                                    href={w.status?.workspaceUrl || `/start/${w.id}}`}
-                                    className="rounded-xl group hover:bg-gray-100 dark:hover:bg-gray-800 flex"
-                                >
-                                    <WorkspaceEntry info={w} shortVersion={true} />
-                                </a>
-                            );
-                        })}
+        <div className="container">
+            <Menu />
+            <div className="flex flex-col mt-32 mx-auto ">
+                <div className="flex flex-col max-h-screen max-w-xl mx-auto items-center w-full">
+                    <Heading1>New Workspace</Heading1>
+                    <div className="text-gray-500 text-center text-base">
+                        Create a new workspace in the{" "}
+                        <span className="font-semibold text-gray-600 dark:text-gray-400">{currentOrg?.name}</span>{" "}
+                        organization.
                     </div>
-                )}
+
+                    <div className="-mx-6 px-6 mt-6 w-full">
+                        {createWorkspaceMutation.error || workspaceContext.error ? (
+                            <ErrorMessage
+                                error={
+                                    (createWorkspaceMutation.error as StartWorkspaceError) ||
+                                    (workspaceContext.error as StartWorkspaceError)
+                                }
+                                setSelectAccountError={setSelectAccountError}
+                                reset={() => {
+                                    workspaceContext.refetch();
+                                    createWorkspaceMutation.reset();
+                                }}
+                            />
+                        ) : null}
+
+                        <InputField>
+                            <RepositoryFinder
+                                onChange={handleContextURLChange}
+                                selectedContextURL={contextURL}
+                                selectedConfigurationId={selectedProjectID}
+                                expanded={!contextURL}
+                                disabled={createWorkspaceMutation.isStarting}
+                            />
+                        </InputField>
+
+                        <InputField error={errorIde}>
+                            <SelectIDEComponent
+                                onSelectionChange={onSelectEditorChange}
+                                availableOptions={
+                                    defaultIdeSource === selectedProjectID ? availableEditorOptions : undefined
+                                }
+                                setError={setErrorIde}
+                                selectedIdeOption={selectedIde}
+                                selectedConfigurationId={selectedProjectID}
+                                pinnedEditorVersions={
+                                    orgSettings?.pinnedEditorVersions &&
+                                    new Map<string, string>(Object.entries(orgSettings.pinnedEditorVersions))
+                                }
+                                useLatest={useLatestIde}
+                                disabled={createWorkspaceMutation.isStarting}
+                                loading={workspaceContext.isLoading}
+                                ignoreRestrictionScopes={undefined}
+                            />
+                        </InputField>
+
+                        <InputField error={errorWsClass}>
+                            <SelectWorkspaceClassComponent
+                                selectedConfigurationId={selectedProjectID}
+                                onSelectionChange={setSelectedWsClass}
+                                setError={setErrorWsClass}
+                                selectedWorkspaceClass={selectedWsClass}
+                                disabled={createWorkspaceMutation.isStarting}
+                                loading={workspaceContext.isLoading}
+                            />
+                        </InputField>
+                    </div>
+                    <div className="w-full flex justify-end mt-3 space-x-2 px-6">
+                        <LoadingButton
+                            onClick={onClickCreate}
+                            autoFocus={true}
+                            className="w-full"
+                            loading={createWorkspaceMutation.isStarting || !!autostart}
+                            disabled={continueButtonDisabled}
+                        >
+                            {createWorkspaceMutation.isStarting ? "Opening Workspace ..." : "Continue"}
+                        </LoadingButton>
+                    </div>
+                    {existingWorkspaces.length > 0 && !createWorkspaceMutation.isStarting && (
+                        <div className="w-full flex flex-col justify-end px-6">
+                            <p className="mt-6 text-center text-base">Running workspaces on this revision</p>
+                            {existingWorkspaces.map((w) => {
+                                return (
+                                    <a
+                                        key={w.id}
+                                        href={w.status?.workspaceUrl || `/start/${w.id}}`}
+                                        className="rounded-xl group hover:bg-gray-100 dark:hover:bg-gray-800 flex"
+                                    >
+                                        <WorkspaceEntry info={w} shortVersion={true} />
+                                    </a>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );
@@ -557,9 +599,10 @@ const ErrorMessage: FunctionComponent<ErrorMessageProps> = ({ error, reset, setS
                     title="You are not authenticated."
                     linkText={`Authorize with ${error.data?.host}`}
                     linkOnClick={() => {
-                        tryAuthorize(error.data?.host, error.data?.scopes).then((payload) =>
-                            setSelectAccountError(payload),
-                        );
+                        tryAuthorize(error.data?.host, error.data?.scopes).then((payload) => {
+                            setSelectAccountError(payload);
+                            reset();
+                        });
                     }}
                 />
             );

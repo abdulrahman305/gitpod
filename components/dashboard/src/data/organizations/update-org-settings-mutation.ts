@@ -13,7 +13,14 @@ import { ErrorCode } from "@gitpod/gitpod-protocol/lib/messaging/error";
 import { useOrgWorkspaceClassesQueryInvalidator } from "./org-workspace-classes-query";
 
 type UpdateOrganizationSettingsArgs = Partial<
-    Pick<OrganizationSettings, "workspaceSharingDisabled" | "defaultWorkspaceImage" | "allowedWorkspaceClasses">
+    Pick<
+        OrganizationSettings,
+        | "workspaceSharingDisabled"
+        | "defaultWorkspaceImage"
+        | "allowedWorkspaceClasses"
+        | "pinnedEditorVersions"
+        | "restrictedEditorNames"
+    >
 >;
 
 export const useUpdateOrgSettingsMutation = () => {
@@ -23,12 +30,22 @@ export const useUpdateOrgSettingsMutation = () => {
     const teamId = org?.id || "";
 
     return useMutation<OrganizationSettings, Error, UpdateOrganizationSettingsArgs>({
-        mutationFn: async ({ workspaceSharingDisabled, defaultWorkspaceImage, allowedWorkspaceClasses }) => {
+        mutationFn: async ({
+            workspaceSharingDisabled,
+            defaultWorkspaceImage,
+            allowedWorkspaceClasses,
+            pinnedEditorVersions,
+            restrictedEditorNames,
+        }) => {
             const settings = await organizationClient.updateOrganizationSettings({
                 organizationId: teamId,
                 workspaceSharingDisabled: workspaceSharingDisabled || false,
                 defaultWorkspaceImage,
                 allowedWorkspaceClasses,
+                updatePinnedEditorVersions: !!pinnedEditorVersions,
+                pinnedEditorVersions,
+                restrictedEditorNames,
+                updateRestrictedEditorNames: !!restrictedEditorNames,
             });
             return settings.settings!;
         },

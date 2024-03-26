@@ -254,6 +254,14 @@ export class OrganizationServiceAPI implements ServiceImpl<typeof OrganizationSe
         }
 
         const update: Partial<ProtocolOrganizationSettings> = {};
+        if (req.updateRestrictedEditorNames) {
+            update.restrictedEditorNames = req.restrictedEditorNames;
+        } else if (req.restrictedEditorNames.length > 0) {
+            throw new ApplicationError(
+                ErrorCodes.BAD_REQUEST,
+                "updateRestrictedEditorNames is required to be true to update restrictedEditorNames",
+            );
+        }
         if (typeof req.workspaceSharingDisabled === "boolean") {
             update.workspaceSharingDisabled = req.workspaceSharingDisabled;
         }
@@ -261,6 +269,9 @@ export class OrganizationServiceAPI implements ServiceImpl<typeof OrganizationSe
             update.defaultWorkspaceImage = req.defaultWorkspaceImage;
         }
         update.allowedWorkspaceClasses = req.allowedWorkspaceClasses;
+        if (req.updatePinnedEditorVersions) {
+            update.pinnedEditorVersions = req.pinnedEditorVersions;
+        }
 
         if (Object.keys(update).length === 0) {
             throw new ApplicationError(ErrorCodes.BAD_REQUEST, "nothing to update");
