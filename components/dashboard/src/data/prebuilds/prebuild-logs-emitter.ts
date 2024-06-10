@@ -9,29 +9,36 @@ import { prebuildClient } from "../../service/public-api";
 import { useEffect, useState } from "react";
 import { matchPrebuildError, onDownloadPrebuildLogsUrl } from "@gitpod/public-api-common/lib/prebuild-utils";
 import { Disposable } from "@gitpod/gitpod-protocol";
+import { ApplicationError, ErrorCodes } from "@gitpod/gitpod-protocol/lib/messaging/error";
 
-export function usePrebuildLogsEmitter(prebuildId: string) {
+export function usePrebuildLogsEmitter(prebuildId: string, taskId: string) {
     const [emitter] = useState(new EventEmitter());
     const [isLoading, setIsLoading] = useState(true);
     const [disposable, setDisposable] = useState<Disposable | undefined>();
 
     useEffect(() => {
         setIsLoading(true);
-    }, [prebuildId]);
+    }, [prebuildId, taskId]);
 
     useEffect(() => {
         const controller = new AbortController();
         const watch = async () => {
+            if (!prebuildId || !taskId) {
+                setIsLoading(false);
+                return;
+            }
             let dispose: () => void | undefined;
             controller.signal.addEventListener("abort", () => {
                 dispose?.();
             });
             const prebuild = await prebuildClient.getPrebuild({ prebuildId });
-            if (!prebuild.prebuild?.status?.logUrl) {
-                throw new Error("no prebuild logs url found");
+            const task = prebuild.prebuild?.status?.taskLogs?.find((log) => log.taskId === taskId);
+            if (!task?.logUrl) {
+                setIsLoading(false);
+                throw new ApplicationError(ErrorCodes.NOT_FOUND, "Task not found");
             }
             dispose = onDownloadPrebuildLogsUrl(
-                prebuild.prebuild.status.logUrl,
+                task.logUrl,
                 (msg) => {
                     const error = matchPrebuildError(msg);
                     if (!error) {
@@ -62,6 +69,6 @@ export function usePrebuildLogsEmitter(prebuildId: string) {
         return () => {
             controller.abort();
         };
-    }, [emitter, prebuildId]);
+    }, [emitter, prebuildId, taskId]);
     return { emitter, isLoading, disposable };
 }

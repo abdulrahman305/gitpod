@@ -58,6 +58,7 @@ import { TransactionalDBImpl } from "./transactional-db-impl";
 import { TypeORM } from "./typeorm";
 import { ApplicationError, ErrorCodes } from "@gitpod/gitpod-protocol/lib/messaging/error";
 import { DBProject } from "./entity/db-project";
+import { PrebuiltWorkspaceWithWorkspace } from "@gitpod/gitpod-protocol/src/protocol";
 
 type RawTo<T> = (instance: WorkspaceInstance, ws: Workspace) => T;
 interface OrderBy {
@@ -480,6 +481,39 @@ export class TypeORMWorkspaceDBImpl extends TransactionalDBImpl<WorkspaceDB> imp
         return resultSessions;
     }
 
+    public async findEligibleWorkspacesForSoftDeletion(
+        cutOffDate: Date = new Date(),
+        limit: number = 100,
+        type: WorkspaceType = "regular",
+    ): Promise<WorkspaceAndOwner[]> {
+        // we do not allow to run this with a future date
+        if (cutOffDate > new Date()) {
+            throw new Error("cutOffDate must not be in the future, was: " + cutOffDate.toISOString());
+        }
+        const workspaceRepo = await this.getWorkspaceRepo();
+        const dbResults = await workspaceRepo.query(
+            `
+                SELECT ws.id AS id,
+                       ws.ownerId AS ownerId
+                    FROM d_b_workspace AS ws
+                    WHERE ws.deleted = 0
+                        AND ws.type= ?
+                        AND ws.softDeleted IS NULL
+                        AND ws.softDeletedTime = ''
+                        AND ws.pinned = 0
+                        AND ws.deletionEligibilityTime != ''
+                        AND ws.deletionEligibilityTime < ?
+                    LIMIT ?;
+            `,
+            [type, cutOffDate.toISOString(), limit],
+        );
+
+        return dbResults as WorkspaceAndOwner[];
+    }
+
+    /**
+     * @deprecated delete me end of June 2024
+     */
     public async findWorkspacesForGarbageCollection(minAgeInDays: number, limit: number): Promise<WorkspaceAndOwner[]> {
         const workspaceRepo = await this.getWorkspaceRepo();
 
@@ -495,6 +529,7 @@ export class TypeORMWorkspaceDBImpl extends TransactionalDBImpl<WorkspaceDB> imp
                         AND ws.softDeletedTime = ''
                         AND ws.softDeleted IS NULL
                         AND ws.pinned = 0
+                        AND ws.deletionEligibilityTime = ''
                         AND ws.creationTime < NOW() - INTERVAL ? DAY
                     GROUP BY ws.id, ws.ownerId
                     HAVING MAX(GREATEST(wsi.creationTime, wsi.startedTime, wsi.stoppedTime)) < NOW() - INTERVAL ? DAY OR MAX(wsi.creationTime) IS NULL
@@ -550,6 +585,9 @@ export class TypeORMWorkspaceDBImpl extends TransactionalDBImpl<WorkspaceDB> imp
         return dbResults as WorkspaceOwnerAndSoftDeleted[];
     }
 
+    /**
+     * @deprecated delete me end of June 2024
+     */
     public async findPrebuiltWorkspacesForGC(daysUnused: number, limit: number): Promise<WorkspaceAndOwner[]> {
         const workspaceRepo = await this.getWorkspaceRepo();
         const dbResults = await workspaceRepo.query(
@@ -563,6 +601,7 @@ export class TypeORMWorkspaceDBImpl extends TransactionalDBImpl<WorkspaceDB> imp
                         pb.buildworkspaceId = ws.id
                     AND ws.type = 'prebuild'
                     AND ws.contentDeletedTime = ''
+                    AND ws.deletionEligibilityTime = ''
                     AND ws.pinned = 0
                     AND ws.creationTime < NOW() - INTERVAL ? DAY
                 GROUP BY ws.id, ws.ownerId
@@ -997,7 +1036,7 @@ export class TypeORMWorkspaceDBImpl extends TransactionalDBImpl<WorkspaceDB> imp
         projectId: string,
         branch?: string,
         limit?: number,
-    ): Promise<PrebuiltWorkspace[]> {
+    ): Promise<PrebuiltWorkspaceWithWorkspace[]> {
         const repo = await this.getPrebuiltWorkspaceRepo();
 
         const query = repo
@@ -1014,7 +1053,7 @@ export class TypeORMWorkspaceDBImpl extends TransactionalDBImpl<WorkspaceDB> imp
         }
 
         const res = await query.getMany();
-        return res;
+        return res as PrebuiltWorkspaceWithWorkspace[];
     }
 
     /**
@@ -1043,7 +1082,7 @@ export class TypeORMWorkspaceDBImpl extends TransactionalDBImpl<WorkspaceDB> imp
             field: string;
             order: "ASC" | "DESC";
         },
-    ): Promise<PrebuiltWorkspace[]> {
+    ): Promise<PrebuiltWorkspaceWithWorkspace[]> {
         const repo = await this.getPrebuiltWorkspaceRepo();
         const query = repo
             .createQueryBuilder("pws")
@@ -1114,7 +1153,7 @@ export class TypeORMWorkspaceDBImpl extends TransactionalDBImpl<WorkspaceDB> imp
             );
         }
 
-        return query.getMany();
+        return (await query.getMany()) as PrebuiltWorkspaceWithWorkspace[];
     }
 
     async findPrebuiltWorkspaceById(id: string): Promise<PrebuiltWorkspace | undefined> {

@@ -20,6 +20,7 @@ import {
     StartWorkspaceResult,
     User,
     WORKSPACE_TIMEOUT_DEFAULT_SHORT,
+    WithPrebuild,
     Workspace,
     WorkspaceContext,
     WorkspaceImageBuild,
@@ -75,6 +76,8 @@ import { SnapshotService } from "./snapshot-service";
 import { InstallationService } from "../auth/installation-service";
 import { PublicAPIConverter } from "@gitpod/public-api-common/lib/public-api-converter";
 import { WatchWorkspaceStatusResponse } from "@gitpod/public-api/lib/gitpod/v1/workspace_pb";
+
+export const GIT_STATUS_LENGTH_CAP_BYTES = 4096;
 
 export interface StartWorkspaceOptions extends StarterStartWorkspaceOptions {
     /**
@@ -189,7 +192,8 @@ export class WorkspaceService {
             );
             throw err;
         }
-
+        this.asyncUpdateDeletionEligabilityTime(user.id, workspace.id);
+        this.asyncUpdateDeletionEligabilityTimeForUsedPrebuild(user.id, workspace);
         return workspace;
     }
 
@@ -333,6 +337,7 @@ export class WorkspaceService {
             return;
         }
         await this.workspaceStarter.stopWorkspaceInstance({}, instance.id, instance.region, reason, policy);
+        this.asyncUpdateDeletionEligabilityTime(userId, workspaceId);
     }
 
     public async stopRunningWorkspacesForUser(
@@ -353,9 +358,84 @@ export class WorkspaceService {
                     reason,
                     policy,
                 );
+                this.asyncUpdateDeletionEligabilityTime(userId, info.workspace.id);
             }),
         );
         return infos.map((instance) => instance.workspace);
+    }
+
+    private asyncUpdateDeletionEligabilityTimeForUsedPrebuild(userId: string, workspace: Workspace): void {
+        (async () => {
+            if (WithPrebuild.is(workspace.context) && workspace.context.prebuildWorkspaceId) {
+                // mark the prebuild active
+                const prebuiltWorkspace = await this.db.findPrebuiltWorkspaceById(
+                    workspace.context.prebuildWorkspaceId,
+                );
+                if (prebuiltWorkspace?.buildWorkspaceId) {
+                    await this.updateDeletionEligabilityTime(userId, prebuiltWorkspace?.buildWorkspaceId, true);
+                }
+            }
+        })().catch((err) =>
+            log.error(
+                { userId, workspaceId: workspace.id },
+                "Failed to update deletion eligibility time for prebuild",
+                err,
+            ),
+        );
+    }
+
+    private asyncUpdateDeletionEligabilityTime(userId: string, workspaceId: string): void {
+        this.updateDeletionEligabilityTime(userId, workspaceId).catch((err) =>
+            log.error({ userId, workspaceId }, "Failed to update deletion eligibility time", err),
+        );
+    }
+
+    /**
+     * Sets the deletionEligibilityTime of the workspace, depening of the current state of the workspace and the configuration.
+     *
+     * @param userId sets the
+     * @param workspaceId
+     * @returns
+     */
+    async updateDeletionEligabilityTime(userId: string, workspaceId: string, activeNow = false): Promise<void> {
+        try {
+            let daysToLive = this.config.workspaceGarbageCollection?.minAgeDays || 14;
+            const daysToLiveForPrebuilds = this.config.workspaceGarbageCollection?.minAgePrebuildDays || 7;
+
+            const workspace = await this.doGetWorkspace(userId, workspaceId);
+            const instance = await this.db.findCurrentInstance(workspaceId);
+            let lastActive =
+                instance?.stoppingTime || instance?.startedTime || instance?.creationTime || workspace?.creationTime;
+            if (activeNow) {
+                lastActive = new Date().toISOString();
+            }
+            if (!lastActive) {
+                return;
+            }
+            const deletionEligibilityTime = new Date(lastActive);
+            if (workspace.type === "prebuild") {
+                // set to last active plus daysToLiveForPrebuilds as iso string
+                deletionEligibilityTime.setDate(deletionEligibilityTime.getDate() + daysToLiveForPrebuilds);
+                await this.db.updatePartial(workspaceId, {
+                    deletionEligibilityTime: deletionEligibilityTime.toISOString(),
+                });
+                return;
+            }
+            // workspaces with pending changes live twice as long
+            if (
+                (instance?.gitStatus?.totalUncommitedFiles || 0) > 0 ||
+                (instance?.gitStatus?.totalUnpushedCommits || 0) > 0 ||
+                (instance?.gitStatus?.totalUntrackedFiles || 0) > 0
+            ) {
+                daysToLive = daysToLive * 2;
+            }
+            deletionEligibilityTime.setDate(deletionEligibilityTime.getDate() + daysToLive);
+            await this.db.updatePartial(workspaceId, {
+                deletionEligibilityTime: deletionEligibilityTime.toISOString(),
+            });
+        } catch (error) {
+            log.error({ userId, workspaceId }, "Failed to update deletion eligibility time", error);
+        }
     }
 
     /**
@@ -608,6 +688,7 @@ export class WorkspaceService {
 
         // at this point we're about to actually start a new workspace
         const result = await this.workspaceStarter.startWorkspace(ctx, workspace, user, await projectPromise, options);
+        this.asyncUpdateDeletionEligabilityTime(user.id, workspaceId);
         return result;
     }
 
@@ -717,6 +798,19 @@ export class WorkspaceService {
     ) {
         await this.auth.checkPermissionOnWorkspace(userId, "access", workspaceId);
 
+        if (!!gitStatus) {
+            const validateGitStatusLength = await getExperimentsClientForBackend().getValueAsync(
+                "api_validate_git_status_length",
+                false,
+                {
+                    user: { id: userId || "" },
+                },
+            );
+            if (validateGitStatusLength) {
+                this.validateGitStatusLength(gitStatus, GIT_STATUS_LENGTH_CAP_BYTES);
+            }
+        }
+
         let instance = await this.getCurrentInstance(userId, workspaceId);
         if (WorkspaceInstanceRepoStatus.equals(instance.gitStatus, gitStatus)) {
             return;
@@ -724,11 +818,26 @@ export class WorkspaceService {
 
         const workspace = await this.doGetWorkspace(userId, workspaceId);
         instance = await this.db.updateInstancePartial(instance.id, { gitStatus });
+        await this.updateDeletionEligabilityTime(userId, workspaceId);
         await this.publisher.publishInstanceUpdate({
             instanceID: instance.id,
             ownerID: workspace.ownerId,
             workspaceID: workspace.id,
         });
+    }
+
+    protected validateGitStatusLength(gitStatus: Required<WorkspaceInstanceRepoStatus>, maxByteLength: number) {
+        try {
+            const s = JSON.stringify(gitStatus);
+            if (Buffer.byteLength(s, "utf8") > maxByteLength) {
+                throw new ApplicationError(
+                    ErrorCodes.BAD_REQUEST,
+                    `gitStatus too long, maximum is ${maxByteLength} bytes`,
+                );
+            }
+        } catch (err) {
+            throw new ApplicationError(ErrorCodes.BAD_REQUEST, "Invalid gitStatus: " + err.message);
+        }
     }
 
     public async getSupportedWorkspaceClasses(user: { id: string }): Promise<SupportedWorkspaceClass[]> {

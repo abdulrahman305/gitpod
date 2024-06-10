@@ -19,23 +19,39 @@ import { ApplicationError, ErrorCodes } from "@gitpod/gitpod-protocol/lib/messag
 
 async function tryThree<T>(errMessage: string, code: (attempt: number) => Promise<T>): Promise<T> {
     let attempt = 0;
-    // we do sometimes see INTERNAL errors from SpiceDB, so we retry a few times
+    // we do sometimes see INTERNAL errors from SpiceDB, or grpc-js reports DEADLINE_EXCEEDED, so we retry a few times
     // last time we checked it was 15 times per day (check logs)
     while (attempt++ < 3) {
         try {
             return await code(attempt);
         } catch (err) {
-            if (err.code === grpc.status.INTERNAL && attempt < 3) {
+            if (
+                (err.code === grpc.status.INTERNAL ||
+                    err.code === grpc.status.DEADLINE_EXCEEDED ||
+                    err.code === grpc.status.UNAVAILABLE) &&
+                attempt < 3
+            ) {
+                let delay = 500 * attempt;
+                if (err.code === grpc.status.DEADLINE_EXCEEDED) {
+                    // we already waited for timeout, so let's try again immediately
+                    delay = 0;
+                }
+
                 log.warn(errMessage, err, {
                     attempt,
+                    delay,
+                    code: err.code,
                 });
-            } else {
-                log.error(errMessage, err, {
-                    attempt,
-                });
-                // we don't try again on other errors
-                throw err;
+                await new Promise((resolve) => setTimeout(resolve, delay));
+                continue;
             }
+
+            log.error(errMessage, err, {
+                attempt,
+                code: err.code,
+            });
+            // we don't try again on other errors
+            throw err;
         }
     }
     throw new Error("unreachable");
