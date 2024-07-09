@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <projectDescription>
-	<name>jetbrains-backend-plugin</name>
+	<name>gitpod-remote-backend-plugin</name>
 	<comment>Project backend-plugin created by Buildship.</comment>
 	<projects>
 	</projects>

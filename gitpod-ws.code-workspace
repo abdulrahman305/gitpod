@@ -160,6 +160,7 @@
         "gopls": {
             "allowModfileModifications": true
         },
-        "prettier.configPath": "/workspace/gitpod/.prettierrc.json"
+        "prettier.configPath": "/workspace/gitpod/.prettierrc.json",
+        "java.compile.nullAnalysis.mode": "automatic"
     }
 }
