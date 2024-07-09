@@ -15,7 +15,7 @@ import {
     CommitContext,
     RefType,
 } from "@gitpod/gitpod-protocol";
-import { GitHubGraphQlEndpoint } from "./api";
+import { GitHubGraphQlEndpoint, QueryResult } from "./api";
 import { NotFoundError, UnauthorizedError } from "../errors";
 import { log, LogContext, LogPayload } from "@gitpod/gitpod-protocol/lib/util/logging";
 import { IContextParser, IssueContexts, AbstractContextParser } from "../workspace/context-parser";
@@ -24,6 +24,7 @@ import { GitHubTokenHelper } from "./github-token-helper";
 import { TraceContext } from "@gitpod/gitpod-protocol/lib/util/tracing";
 import { RepoURL } from "../repohost";
 import { containsScopes } from "../prebuilds/token-scopes-inclusion";
+import { TrustedValue } from "@gitpod/gitpod-protocol/lib/util/scrubbing";
 
 @injectable()
 export class GithubContextParser extends AbstractContextParser implements IContextParser {
@@ -116,9 +117,7 @@ export class GithubContextParser extends AbstractContextParser implements IConte
         const span = TraceContext.startSpan("GithubContextParser.handleDefaultContext", ctx);
 
         try {
-            const result: any = await this.githubQueryApi.runQuery(
-                user,
-                `
+            const query = `
                 query {
                     repository(name: "${repoName}", owner: "${owner}") {
                         ${this.repoProperties()}
@@ -130,17 +129,23 @@ export class GithubContextParser extends AbstractContextParser implements IConte
                         },
                     }
                 }
-            `,
-            );
+            `;
+            const result: QueryResult<any> = await this.githubQueryApi.runQuery(user, query);
             span.log({ "request.finished": "" });
 
+            if (result.errors) {
+                log.error("Errors executing query.", { query, errors: new TrustedValue(result.errors) });
+            }
+
             if (result.data.repository === null) {
+                log.warn(`Repository not found.`, { query });
                 throw await NotFoundError.create(
                     await this.tokenHelper.getCurrentToken(user),
                     user,
                     this.config.host,
                     owner,
                     repoName,
+                    result.errors && result.errors.map((e: any) => e.message).join(", "),
                 );
             }
             const defaultBranch = result.data.repository.defaultBranchRef;
@@ -184,9 +189,7 @@ export class GithubContextParser extends AbstractContextParser implements IConte
                 const path = decodeURIComponent(segments.slice(i).join("/"));
                 // Sanitize path expression to prevent GraphQL injections (e.g. escape any `"` or `\n`).
                 const pathExpression = JSON.stringify(`${branchNameOrCommitHash}:${path}`);
-                const result: any = await this.githubQueryApi.runQuery(
-                    user,
-                    `
+                const query = `
                     query {
                         repository(name: "${repoName}", owner: "${owner}") {
                             ${this.repoProperties()}
@@ -213,18 +216,23 @@ export class GithubContextParser extends AbstractContextParser implements IConte
                             }
                         }
                     }
-                `,
-                );
+                `;
+                const result: QueryResult<any> = await this.githubQueryApi.runQuery(user, query);
                 span.log({ "request.finished": "" });
+                if (result.errors) {
+                    log.error("Errors executing query.", { query, errors: new TrustedValue(result.errors) });
+                }
 
                 const repo = result.data.repository;
                 if (repo === null) {
+                    log.warn(`Repository not found.`, { query });
                     throw await NotFoundError.create(
                         await this.tokenHelper.getCurrentToken(user),
                         user,
                         this.config.host,
                         owner,
                         repoName,
+                        result.errors && result.errors.map((e: any) => e.message).join(", "),
                     );
                 }
 
@@ -293,9 +301,7 @@ export class GithubContextParser extends AbstractContextParser implements IConte
         }
 
         try {
-            const result: any = await this.githubQueryApi.runQuery(
-                user,
-                `
+            const query = `
                 query {
                     repository(name: "${repoName}", owner: "${owner}") {
                         object(oid: "${sha}") {
@@ -313,17 +319,24 @@ export class GithubContextParser extends AbstractContextParser implements IConte
                         },
                     }
                 }
-            `,
-            );
+            `;
+            const result: QueryResult<any> = await this.githubQueryApi.runQuery(user, query);
             span.log({ "request.finished": "" });
 
+            if (result.errors) {
+                log.error("Errors executing query.", { query, errors: new TrustedValue(result.errors) });
+            }
+
             if (result.data.repository === null) {
+                log.warn(`Repository not found.`, { query });
+
                 throw await NotFoundError.create(
                     await this.tokenHelper.getCurrentToken(user),
                     user,
                     this.config.host,
                     owner,
                     repoName,
+                    result.errors && result.errors.map((e: any) => e.message).join(", "),
                 );
             }
 
@@ -362,9 +375,7 @@ export class GithubContextParser extends AbstractContextParser implements IConte
         const span = TraceContext.startSpan("handlePullRequestContext", ctx);
 
         try {
-            const result: any = await this.githubQueryApi.runQuery(
-                user,
-                `
+            const query = `
                 query {
                     repository(name: "${repoName}", owner: "${owner}") {
                         pullRequest(number: ${pullRequestNr}) {
@@ -402,17 +413,24 @@ export class GithubContextParser extends AbstractContextParser implements IConte
                         }
                     }
                 }
-            `,
-            );
+            `;
+            const result: QueryResult<any> = await this.githubQueryApi.runQuery(user, query);
             span.log({ "request.finished": "" });
 
+            if (result.errors) {
+                log.error("Errors executing query.", { query, errors: new TrustedValue(result.errors) });
+            }
+
             if (result.data.repository === null) {
+                log.warn(`Repository not found.`, { query });
+
                 throw await NotFoundError.create(
                     await this.tokenHelper.getCurrentToken(user),
                     user,
                     this.config.host,
                     owner,
                     repoName,
+                    result.errors && result.errors.map((e: any) => e.message).join(", "),
                 );
             }
             const pr = result.data.repository.pullRequest;
@@ -464,9 +482,7 @@ export class GithubContextParser extends AbstractContextParser implements IConte
         const span = TraceContext.startSpan("handleIssueContext", ctx);
 
         try {
-            const result: any = await this.githubQueryApi.runQuery(
-                user,
-                `
+            const query = `
                 query {
                     repository(name: "${repoName}", owner: "${owner}") {
                         issue(number: ${issueNr}) {
@@ -481,17 +497,24 @@ export class GithubContextParser extends AbstractContextParser implements IConte
                         },
                     }
                 }
-            `,
-            );
+            `;
+            const result: QueryResult<any> = await this.githubQueryApi.runQuery(user, query);
             span.log({ "request.finished": "" });
 
+            if (result.errors) {
+                log.error("Errors executing query.", { query, errors: new TrustedValue(result.errors) });
+            }
+
             if (result.data.repository === null) {
+                log.warn(`Repository not found.`, { query });
+
                 throw await NotFoundError.create(
                     await this.tokenHelper.getCurrentToken(user),
                     user,
                     this.config.host,
                     owner,
                     repoName,
+                    result.errors && result.errors.map((e: any) => e.message).join(", "),
                 );
             }
             const issue = result.data.repository.issue;

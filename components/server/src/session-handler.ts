@@ -27,7 +27,7 @@ export class SessionHandler {
 
     public jwtSessionConvertor(): express.Handler {
         return async (req, res) => {
-            const user = req.user;
+            const { user } = req;
             if (!user) {
                 res.status(401);
                 res.send("User has no valid session.");
@@ -35,7 +35,7 @@ export class SessionHandler {
             }
 
             const cookies = parseCookieHeader(req.headers.cookie || "");
-            const jwtTokens = cookies[getJWTCookieName(this.config)];
+            const jwtTokens = this.filterCookieValues(cookies);
 
             let decoded: { payload: JwtPayload; keyId: string } | undefined = undefined;
             try {
@@ -146,10 +146,18 @@ export class SessionHandler {
      */
     async verifyJWTCookie(cookie: string): Promise<JwtPayload | undefined> {
         const cookies = parseCookieHeader(cookie);
-        const cookieValues = cookies[getJWTCookieName(this.config)];
+        const cookieValues = this.filterCookieValues(cookies);
 
         const token = await this.verifyFirstValidJwt(cookieValues);
         return token?.payload;
+    }
+
+    /**
+     * @param cookies
+     * @returns Primary (the cookie name we set in config)
+     */
+    private filterCookieValues(cookies: { [key: string]: string[] }): string[] {
+        return cookies[getPrimaryJWTCookieName(this.config)] ?? [];
     }
 
     /**
@@ -204,10 +212,9 @@ export class SessionHandler {
         const token = await this.authJWT.sign(userID, payload, options?.expirySeconds);
 
         return {
-            name: getJWTCookieName(this.config),
+            name: getPrimaryJWTCookieName(this.config),
             value: token,
             opts: {
-                domain: getJWTCookieDomain(this.config),
                 maxAge: this.config.auth.session.cookie.maxAge * 1000, // express does not match the HTTP spec and uses milliseconds
                 httpOnly: this.config.auth.session.cookie.httpOnly,
                 sameSite: this.config.auth.session.cookie.sameSite,
@@ -216,19 +223,18 @@ export class SessionHandler {
         };
     }
 
-    public clearSessionCookie(res: express.Response, config: Config): void {
-        res.clearCookie(getJWTCookieName(this.config), {
-            domain: getJWTCookieDomain(config),
+    public clearSessionCookie(res: express.Response): void {
+        const { secure, sameSite, httpOnly } = this.config.auth.session.cookie;
+        res.clearCookie(getPrimaryJWTCookieName(this.config), {
+            httpOnly,
+            sameSite,
+            secure,
         });
     }
 }
 
-function getJWTCookieName(config: Config) {
+function getPrimaryJWTCookieName(config: Config) {
     return config.auth.session.cookie.name;
-}
-
-function getJWTCookieDomain(config: Config): string {
-    return config.hostUrl.url.hostname;
 }
 
 function parseCookieHeader(c: string): { [key: string]: string[] } {
