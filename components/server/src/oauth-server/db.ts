@@ -141,6 +141,17 @@ const desktopClient: OAuthClient = {
     ],
 };
 
+const toolbox: OAuthClient = {
+    id: "toolbox-gateway-gitpod-plugin",
+    name: "JetBrains Toolbox Gitpod Plugin",
+    redirectUris: ["jetbrains://gateway/io.gitpod.toolbox.gateway/auth"],
+    allowedGrants: ["authorization_code"],
+    scopes: [
+        // We scope all so that it can work in papi like a PAT
+        { name: "function:*" },
+    ],
+};
+
 const vscode = createVSCodeClient("vscode", "VS Code");
 const vscodeInsiders = createVSCodeClient("vscode-insiders", "VS Code Insiders");
 
@@ -157,6 +168,7 @@ export const inMemoryDatabase: InMemory = {
         [vscodium.id]: vscodium,
         [cursor.id]: cursor,
         [desktopClient.id]: desktopClient,
+        [toolbox.id]: toolbox,
     },
     tokens: {},
     scopes: {},
@@ -167,3 +179,5 @@ for (const clientId in inMemoryDatabase.clients) {
         inMemoryDatabase.scopes[scope.name] = scope;
     }
 }
+
+export const toolboxClient = toolbox;

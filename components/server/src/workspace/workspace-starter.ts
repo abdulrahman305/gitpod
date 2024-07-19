@@ -60,7 +60,7 @@ import {
     WorkspaceInstanceStatus,
     WorkspaceTimeoutDuration,
 } from "@gitpod/gitpod-protocol";
-import { IAnalyticsWriter } from "@gitpod/gitpod-protocol/lib/analytics";
+import { IAnalyticsWriter, TrackMessage } from "@gitpod/gitpod-protocol/lib/analytics";
 import { AttributionId } from "@gitpod/gitpod-protocol/lib/attribution";
 import { Deferred } from "@gitpod/gitpod-protocol/lib/util/deferred";
 import { LogContext, log } from "@gitpod/gitpod-protocol/lib/util/logging";
@@ -136,6 +136,7 @@ import { ctxIsAborted, runWithRequestContext, runWithSubjectId } from "../util/r
 import { SubjectId } from "../auth/subject-id";
 import { ApplicationError, ErrorCodes } from "@gitpod/gitpod-protocol/lib/messaging/error";
 import { IDESettingsVersion } from "@gitpod/gitpod-protocol/lib/ide-protocol";
+import { getFeatureFlagEnableExperimentalJBTB } from "../util/featureflags";
 
 export interface StartWorkspaceOptions extends Omit<GitpodServer.StartWorkspaceOptions, "ideSettings"> {
     excludeFeatureFlags?: NamedWorkspaceFeatureFlag[];
@@ -305,6 +306,13 @@ export class WorkspaceStarter {
             if (lastValidWorkspaceInstance) {
                 const ideConfig = lastValidWorkspaceInstance.configuration?.ideConfig;
                 if (ideConfig?.ide) {
+                    const enableExperimentalJBTB = await getFeatureFlagEnableExperimentalJBTB(user.id);
+                    const preferToolbox = !enableExperimentalJBTB
+                        ? false
+                        : ideSettings?.preferToolbox ??
+                          user.additionalData?.ideSettings?.preferToolbox ??
+                          ideConfig.preferToolbox ??
+                          false;
                     ideSettings = {
                         ...ideSettings,
                         defaultIde: ideConfig.ide,
@@ -312,6 +320,7 @@ export class WorkspaceStarter {
                             ideSettings?.useLatestVersion ??
                             user.additionalData?.ideSettings?.useLatestVersion ??
                             !!ideConfig.useLatest,
+                        preferToolbox,
                     };
                 }
             }
@@ -616,20 +625,28 @@ export class WorkspaceStarter {
             }
             increaseSuccessfulInstanceStartCounter(retries);
 
+            const trackProperties: TrackMessage["properties"] = {
+                workspaceId: workspace.id,
+                instanceId: instance.id,
+                projectId: workspace.projectId,
+                contextURL: workspace.contextURL,
+                type: workspace.type,
+                class: instance.workspaceClass,
+                ideConfig: instance.configuration?.ideConfig,
+                usesPrebuild: startRequest.getSpec()?.getInitializer()?.hasPrebuild(),
+            };
+
+            if (workspace.projectId && trackProperties.usesPrebuild && workspace.type === "regular") {
+                const project = await this.projectDB.findProjectById(workspace.projectId);
+                trackProperties.prebuildTriggerStrategy =
+                    project?.settings?.prebuilds?.triggerStrategy ?? "webhook-based";
+            }
+
             // update analytics
             this.analytics.track({
                 userId: user.id,
                 event: "workspace_started",
-                properties: {
-                    workspaceId: workspace.id,
-                    instanceId: instance.id,
-                    projectId: workspace.projectId,
-                    contextURL: workspace.contextURL,
-                    type: workspace.type,
-                    class: instance.workspaceClass,
-                    ideConfig: instance.configuration?.ideConfig,
-                    usesPrebuild: startRequest.getSpec()?.getInitializer()?.hasPrebuild(),
-                },
+                properties: trackProperties,
                 timestamp: new Date(instance.creationTime),
             });
         } catch (err) {
@@ -901,9 +918,13 @@ export class WorkspaceStarter {
             };
             if (ideConfig.ideSettings && ideConfig.ideSettings.trim() !== "") {
                 try {
+                    const enableExperimentalJBTB = await getFeatureFlagEnableExperimentalJBTB(user.id);
                     const ideSettings: IDESettings = JSON.parse(ideConfig.ideSettings);
                     configuration.ideConfig!.ide = ideSettings.defaultIde;
                     configuration.ideConfig!.useLatest = !!ideSettings.useLatestVersion;
+                    configuration.ideConfig!.preferToolbox = !enableExperimentalJBTB
+                        ? false
+                        : ideSettings.preferToolbox ?? false;
                 } catch (error) {
                     log.error({ userId: user.id, workspaceId: workspace.id }, "cannot parse ideSettings", error);
                 }

@@ -632,6 +632,14 @@
         "allowPin": true,
         "versions": [
           {
+            "version": "2024.1.4",
+            "image": "{{.Repository}}/ide/rustrover:commit-e37bd008058399c71b7b20f6a5dbabfe7a534865",
+            "imageLayers": [
+              "{{.Repository}}/ide/jb-backend-plugin:commit-e37bd008058399c71b7b20f6a5dbabfe7a534865",
+              "{{.Repository}}/ide/jb-launcher:commit-e37bd008058399c71b7b20f6a5dbabfe7a534865"
+            ]
+          },
+          {
             "version": "2024.1.2",
             "image": "{{.Repository}}/ide/rustrover:commit-c295f8299fd17f99913512ec5db5d8a60a1e5d98",
             "imageLayers": [
@@ -678,6 +686,23 @@
         ],
         "installationSteps": [
           "If you don't see an open dialog in your browser, make sure you have the <a target='_blank' class='gp-link' href='https://www.gitpod.io/docs/ides-and-editors/jetbrains-gateway#getting-started-jetbrains-gateway'>JetBrains Gateway with Gitpod Plugin</a> installed on your machine, and then click <b>${OPEN_LINK_LABEL}</b> below."
+        ]
+      },
+      "jetbrains-toolbox": {
+        "defaultDesktopIDE": "intellij",
+        "desktopIDEs": [
+          "intellij",
+          "goland",
+          "pycharm",
+          "phpstorm",
+          "rubymine",
+          "webstorm",
+          "rider",
+          "clion",
+          "rustrover"
+        ],
+        "installationSteps": [
+          "If you don't see an open dialog in your browser, make sure you have the <a target='_blank' class='gp-link' href='https://www.gitpod.io/docs/ides-and-editors/jetbrains-toolbox#getting-started-jetbrains-toolbox'>JetBrains Toolbox with Gitpod Plugin</a> installed on your machine, and then click <b>${OPEN_LINK_LABEL}</b> below."
         ]
       },
       "vscode": {
