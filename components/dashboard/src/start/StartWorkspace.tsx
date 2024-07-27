@@ -9,7 +9,7 @@ import { IDEOptions } from "@gitpod/gitpod-protocol/lib/ide-protocol";
 import { ErrorCodes } from "@gitpod/gitpod-protocol/lib/messaging/error";
 import EventEmitter from "events";
 import * as queryString from "query-string";
-import React, { Suspense, useEffect, useState } from "react";
+import React, { Suspense, useEffect, useMemo } from "react";
 import { v4 } from "uuid";
 import Arrow from "../components/Arrow";
 import ContextMenu from "../components/ContextMenu";
@@ -760,7 +760,7 @@ interface ImageBuildViewProps {
 }
 
 function ImageBuildView(props: ImageBuildViewProps) {
-    const [logsEmitter] = useState(new EventEmitter());
+    const logsEmitter = useMemo(() => new EventEmitter(), []);
 
     useEffect(() => {
         let registered = false;
@@ -794,7 +794,7 @@ function ImageBuildView(props: ImageBuildViewProps) {
                 if (!content) {
                     return;
                 }
-                logsEmitter.emit("logs", content.text);
+                logsEmitter.emit("logs", content.data);
             },
         });
 
@@ -807,7 +807,7 @@ function ImageBuildView(props: ImageBuildViewProps) {
     return (
         <StartPage title="Building Image" phase={props.phase} workspaceId={props.workspaceId}>
             <Suspense fallback={<div />}>
-                <WorkspaceLogs logsEmitter={logsEmitter} errorMessage={props.error?.message} />
+                <WorkspaceLogs taskId="image-build" logsEmitter={logsEmitter} errorMessage={props.error?.message} />
             </Suspense>
             {!!props.onStartWithDefaultImage && (
                 <>

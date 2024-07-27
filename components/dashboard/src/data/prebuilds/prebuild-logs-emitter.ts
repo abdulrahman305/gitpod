@@ -80,16 +80,14 @@ export function usePrebuildLogsEmitter(prebuild: PlainMessage<Prebuild>, taskId:
         const disposables = new DisposableCollection();
         disposables.push(
             streamPrebuildLogs(
+                taskId,
                 task.logUrl,
-                (msg) => {
-                    const error = matchPrebuildError(msg);
-                    if (!error) {
-                        emitter.emit("logs", msg);
-                    } else {
-                        emitter.emit("logs-error", error);
-                    }
+                (chunk) => {
+                    emitter.emit("logs", chunk);
                 },
-                async () => false,
+                (err) => {
+                    emitter.emit("logs-error", err);
+                },
                 () => {
                     emitter.markReachedEnd();
                 },
@@ -110,9 +108,10 @@ export function usePrebuildLogsEmitter(prebuild: PlainMessage<Prebuild>, taskId:
 }
 
 function streamPrebuildLogs(
+    taskId: string,
     streamUrl: string,
-    onLog: (chunk: string) => void,
-    checkIsDone: () => Promise<boolean>,
+    onLog: (chunk: Uint8Array) => void,
+    onError: (err: Error) => void,
     onEnd?: () => void,
 ): DisposableCollection {
     const disposables = new DisposableCollection();
@@ -127,10 +126,6 @@ function streamPrebuildLogs(
     let delayInSeconds = initialDelaySeconds;
 
     const startWatchingLogs = async () => {
-        if (await checkIsDone()) {
-            return;
-        }
-
         const retryBackoff = async (reason: string, err?: Error) => {
             delayInSeconds = Math.min(delayInSeconds * backoffFactor, maxBackoffSeconds);
 
@@ -147,12 +142,16 @@ function streamPrebuildLogs(
         let response: Response | undefined = undefined;
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined = undefined;
         try {
+            disposables.push({
+                dispose: async () => {
+                    await reader?.cancel();
+                },
+            });
             console.debug("fetching from streamUrl: " + streamUrl);
             response = await fetch(streamUrl, {
                 method: "GET",
-                cache: "no-cache",
+                cache: "no-store", // we don't want the browser to a) look at the cache, or b) update the cache (which would interrupt any running fetches to that resource!)
                 credentials: "include",
-                keepalive: true,
                 headers: {
                     TE: "trailers", // necessary to receive stream status code
                 },
@@ -163,42 +162,59 @@ function streamPrebuildLogs(
                 await retryBackoff("no reader");
                 return;
             }
-            disposables.push({ dispose: () => reader?.cancel() });
 
             const decoder = new TextDecoder("utf-8");
             let chunk = await reader.read();
+            let received200 = false;
             while (!chunk.done) {
-                const msg = decoder.decode(chunk.value, { stream: true });
+                if (disposables.disposed) {
+                    // stop reading when disposed
+                    return;
+                }
 
                 // In an ideal world, we'd use res.addTrailers()/response.trailer here. But despite being introduced with HTTP/1.1 in 1999, trailers are not supported by popular proxies (nginx, for example).
                 // So we resort to this hand-written solution:
+                const msg = decoder.decode(chunk.value, { stream: true });
                 const matches = msg.match(HEADLESS_LOG_STREAM_STATUS_CODE_REGEX);
                 const prebuildMatches = matchPrebuildError(msg);
                 if (matches) {
                     if (matches.length < 2) {
                         console.debug("error parsing log stream status code. msg: " + msg);
                     } else {
+                        const prefix = msg.substring(0, matches.index);
+                        if (prefix) {
+                            const prefixChunk = new TextEncoder().encode(prefix);
+                            onLog(prefixChunk);
+                        }
                         const code = parseStatusCode(matches[1]);
                         if (code !== 200) {
                             throw new StreamError(code);
                         }
+                        if (code === 200) {
+                            received200 = true;
+                            break;
+                        }
                     }
-                } else if (prebuildMatches && prebuildMatches.code === ErrorCodes.HEADLESS_LOG_NOT_YET_AVAILABLE) {
-                    // reset backoff because this error is expected
-                    delayInSeconds = initialDelaySeconds;
-                    throw prebuildMatches;
+                } else if (prebuildMatches) {
+                    if (prebuildMatches.code === ErrorCodes.HEADLESS_LOG_NOT_YET_AVAILABLE) {
+                        // reset backoff because this error is expected
+                        delayInSeconds = initialDelaySeconds;
+                        throw prebuildMatches;
+                    }
+                    onError(prebuildMatches);
                 } else {
-                    onLog(msg);
+                    onLog(chunk.value);
                 }
 
                 chunk = await reader.read();
             }
+            console.info("[stream] end of stream", { received200 });
             reader.cancel();
-
-            if (await checkIsDone()) {
+        } catch (err) {
+            if (err instanceof DOMException && err.name === "AbortError") {
+                console.debug("stopped watching headless logs, not retrying: method got disposed of");
                 return;
             }
-        } catch (err) {
             reader?.cancel().catch(console.debug);
             if (err.code === 400) {
                 // sth is really off, and we _should not_ retry

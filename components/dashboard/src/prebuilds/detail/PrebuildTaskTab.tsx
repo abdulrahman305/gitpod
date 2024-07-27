@@ -14,6 +14,7 @@ import { TabsContent } from "@podkit/tabs/Tabs";
 import { PrebuildTaskErrorTab } from "./PrebuildTaskErrorTab";
 import type { PlainMessage } from "@bufbuild/protobuf";
 import { useHistory } from "react-router";
+import { LoadingState } from "@podkit/loading/LoadingState";
 
 const WorkspaceLogs = React.lazy(() => import("../../components/WorkspaceLogs"));
 
@@ -29,35 +30,21 @@ export const PrebuildTaskTab = memo(({ taskId, prebuild }: Props) => {
     const history = useHistory();
 
     useEffect(() => {
-        const errorListener = (err: Error) => {
-            if (err?.name === "AbortError") {
-                return;
-            }
-            if (err instanceof ApplicationError && err.code === ErrorCodes.NOT_FOUND) {
-                // We don't want to show a toast for this error, we handle it in the UI
-                return;
-            }
-            if (err?.message) {
-                toast("Fetching logs failed: " + err.message);
-            }
-        };
-
-        const logErrorListener = (err: ApplicationError) => {
+        const logErrorListener = async (err: ApplicationError) => {
             if (err.code === ErrorCodes.NOT_FOUND) {
                 setError(err);
                 return;
             }
 
-            const toastId = crypto.randomUUID();
+            const digest = await crypto.subtle.digest("sha256", new TextEncoder().encode(err.message + ":" + err.code));
+            const toastId = new TextDecoder().decode(digest);
             toast("Fetching logs failed: " + err.message, { autoHide: false, id: toastId });
             setActiveToasts((prev) => new Set(prev).add(toastId));
         };
 
-        logEmitter.on("error", errorListener);
         logEmitter.on("logs-error", logErrorListener);
 
         return () => {
-            logEmitter.removeListener("error", errorListener);
             logEmitter.removeListener("logs-error", logErrorListener);
             setError(undefined);
         };
@@ -74,6 +61,16 @@ export const PrebuildTaskTab = memo(({ taskId, prebuild }: Props) => {
     }, []);
 
     if (error) {
+        if (error.code === ErrorCodes.NOT_FOUND && taskId === "image-build") {
+            return (
+                <PrebuildTaskErrorTab taskId={taskId}>
+                    <span className="flex justify-center items-center gap-2">
+                        Pulling container image <LoadingState delay={false} size={16} />
+                    </span>
+                </PrebuildTaskErrorTab>
+            );
+        }
+
         return (
             <PrebuildTaskErrorTab taskId={taskId}>
                 Logs of this prebuild task are inaccessible. Use <code>gp validate --prebuild --headless</code> in a
@@ -98,6 +95,7 @@ export const PrebuildTaskTab = memo(({ taskId, prebuild }: Props) => {
                     key={prebuild.id + taskId}
                     classes="w-full h-full"
                     xtermClasses="absolute top-0 left-0 bottom-0 right-0 ml-6 my-0 mt-4"
+                    taskId={taskId}
                     logsEmitter={logEmitter}
                 />
             </Suspense>
