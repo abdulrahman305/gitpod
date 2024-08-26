@@ -7,13 +7,13 @@ defaultArgs:
   publishToNPM: true
   publishToJBMarketplace: true
   localAppVersion: unknown
-  codeCommit: 4fa372442f1a89e59e0330a6b09f087b0713323c
-  codeVersion: 1.91.1
+  codeCommit: f89b31db4e103a12b1f2250d16c7ae6ac6384e82
+  codeVersion: 1.92.1
   codeQuality: stable
   codeWebExtensionCommit: 7ff72a2938a7a06cbdf3964590f7e9b7525958f3
   xtermCommit: 8f10c5febf0162a3c2309076302f770fbad38fde
   noVerifyJBPlugin: false
-  intellijDownloadUrl: "https://download.jetbrains.com/idea/ideaIU-2024.1.4.tar.gz"
+  intellijDownloadUrl: "https://download.jetbrains.com/idea/ideaIU-2024.2.tar.gz"
   golandDownloadUrl: "https://download.jetbrains.com/go/goland-2024.1.4.tar.gz"
   pycharmDownloadUrl: "https://download.jetbrains.com/python/pycharm-professional-2024.1.4.tar.gz"
   phpstormDownloadUrl: "https://download.jetbrains.com/webide/PhpStorm-2024.1.4.tar.gz"
@@ -21,7 +21,7 @@ defaultArgs:
   webstormDownloadUrl: "https://download.jetbrains.com/webstorm/WebStorm-2024.1.5.tar.gz"
   riderDownloadUrl: "https://download.jetbrains.com/rider/JetBrains.Rider-2024.1.4.tar.gz"
   clionDownloadUrl: "https://download.jetbrains.com/cpp/CLion-2024.1.4.tar.gz"
-  rustroverDownloadUrl: "https://download.jetbrains.com/rustrover/RustRover-2024.1.5.tar.gz"
+  rustroverDownloadUrl: "https://download.jetbrains.com/rustrover/RustRover-2024.1.6.tar.gz"
   jbBackendVersion: "latest"
   dockerVersion: "20.10.24"
   dockerComposeVersion: "2.27.0-gitpod.0"

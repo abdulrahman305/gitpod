@@ -36,13 +36,28 @@ project(":") {
     kotlin {
         val excludedPackage = if (environmentName == "latest") "stable" else "latest"
         sourceSets["main"].kotlin.exclude("io/gitpod/jetbrains/remote/${excludedPackage}/**")
+
+        if (properties("platformType") == "RD") {
+            print("Rider: exclude unnecessary files")
+            sourceSets["main"].kotlin.exclude("**/GitpodForceUpdateMavenProjectsActivity.kt")
+            sourceSets["main"].kotlin.exclude("**/maven.xml")
+        }
     }
 
     sourceSets {
         main {
-            resources.srcDirs("src/main/resources-${environmentName}")
+            resources.srcDirs("src/main/resources")
+            if (properties("platformType") == "RD") {
+                print("Rider: import rider source set")
+                resources.srcDirs("src/main/resources-rider")
+            }
+            resources.srcDirs("src/main/resources-${environmentName.replace("-rider", "")}")
         }
     }
+}
+
+tasks.named<ProcessResources>("processResources") {
+    duplicatesStrategy = DuplicatesStrategy.WARN
 }
 
 // Configure project's dependencies
@@ -96,7 +111,7 @@ dependencies {
 // Read more: https://github.com/JetBrains/gradle-intellij-plugin
 intellijPlatform {
     pluginConfiguration {
-        name = properties("pluginName")
+        name = properties("latestPluginName")
         version = pluginVersion
         ideaVersion {
             sinceBuild = properties("pluginSinceBuild")
@@ -159,5 +174,9 @@ tasks {
 }
 
 tasks.register("runPluginVerifier") {
-    intellijPlatform.verifyPlugin.ides.ide(IntelliJPlatformType.IntellijIdeaUltimate, properties("pluginVerifierIdeVersions"))
+    if (properties("platformType") == "RD") {
+        intellijPlatform.verifyPlugin.ides.ide(IntelliJPlatformType.Rider, properties("pluginVerifierIdeVersions"))
+    } else {
+        intellijPlatform.verifyPlugin.ides.ide(IntelliJPlatformType.IntellijIdeaUltimate, properties("pluginVerifierIdeVersions"))
+    }
 }

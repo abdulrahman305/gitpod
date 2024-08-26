@@ -100,6 +100,7 @@ import {
     ProjectEnvVar,
     UserEnvVar,
     UserFeatureSettings,
+    WorkspaceImageBuild,
     WorkspaceTimeoutSetting,
 } from "@gitpod/gitpod-protocol/lib/protocol";
 import { ListUsageRequest, ListUsageResponse } from "@gitpod/gitpod-protocol/lib/usage";
@@ -242,6 +243,20 @@ export class GitpodServerImpl implements GitpodServerWithTracing, Disposable {
         if (!this.client) {
             return;
         }
+
+        // todo(ft) disable registering for all updates from all projects by default and only listen to updates when the client is explicity interested in them
+        const disableWebsocketPrebuildUpdates = await getExperimentsClientForBackend().getValueAsync(
+            "disableWebsocketPrebuildUpdates",
+            false,
+            {
+                gitpodHost: this.config.hostUrl.url.host,
+            },
+        );
+        if (disableWebsocketPrebuildUpdates) {
+            log.info("ws prebuild updates disabled by feature flag");
+            return;
+        }
+
         // 'registering for prebuild updates for all projects this user has access to
         const projects = await this.getAccessibleProjects();
 
@@ -1096,7 +1111,12 @@ export class GitpodServerImpl implements GitpodServerWithTracing, Disposable {
         const teamMembers = await this.organizationService.listMembers(user.id, workspace.organizationId);
         await this.guardAccess({ kind: "workspaceLog", subject: workspace, teamMembers }, "get");
 
-        await this.workspaceService.watchWorkspaceImageBuildLogs(user.id, workspaceId, client);
+        const receiver = async (chunk: Uint8Array) => {
+            client.onWorkspaceImageBuildLogs(undefined as any as WorkspaceImageBuild.StateInfo, {
+                data: Array.from(chunk), // json-rpc can't handle objects, so we convert back-and-forth here
+            });
+        };
+        await this.workspaceService.watchWorkspaceImageBuildLogs(user.id, workspaceId, receiver);
     }
 
     async getHeadlessLog(ctx: TraceContext, instanceId: string): Promise<HeadlessLogUrls> {

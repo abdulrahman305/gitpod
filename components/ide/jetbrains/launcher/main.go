@@ -81,6 +81,15 @@ type LaunchContext struct {
 	shouldWaitBackendPlugin bool
 }
 
+func (c *LaunchContext) getCommonJoinLinkResponse(appPid int, joinLink string) *JoinLinkResponse {
+	return &JoinLinkResponse{
+		AppPid:      appPid,
+		JoinLink:    joinLink,
+		IDEVersion:  fmt.Sprintf("%s-%s", c.info.ProductCode, c.info.BuildNumber),
+		ProjectPath: c.projectContextDir,
+	}
+}
+
 // JB startup entrypoint
 func main() {
 	if len(os.Args) == 3 && os.Args[1] == "env" && os.Args[2] != "" {
@@ -267,7 +276,7 @@ func serve(launchCtx *LaunchContext) {
 		if backendPort == "" {
 			backendPort = defaultBackendPort
 		}
-		jsonResp, err := resolveJsonLink2(backendPort)
+		jsonResp, err := resolveJsonLink2(launchCtx, backendPort)
 		if err != nil {
 			log.WithError(err).Error("cannot resolve join link")
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -385,6 +394,11 @@ type Response struct {
 type JoinLinkResponse struct {
 	AppPid   int    `json:"appPid"`
 	JoinLink string `json:"joinLink"`
+
+	// IDEVersion is the ideVersionHint that required by Toolbox to `setAutoConnectOnEnvironmentReady`
+	IDEVersion string `json:"ideVersion"`
+	// ProjectPath is the projectPathHint that required by Toolbox to `setAutoConnectOnEnvironmentReady`
+	ProjectPath string `json:"projectPath"`
 }
 
 func resolveToolboxLink(wsInfo *supervisor.WorkspaceInfoResponse) (string, error) {
@@ -426,7 +440,7 @@ func resolveJsonLink(backendPort string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
@@ -438,13 +452,13 @@ func resolveJsonLink(backendPort string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(jsonResp.Projects) != 1 {
-		return "", xerrors.Errorf("project is not found")
+	if len(jsonResp.Projects) > 0 {
+		return jsonResp.Projects[0].JoinLink, nil
 	}
-	return jsonResp.Projects[0].JoinLink, nil
+	return jsonResp.JoinLink, nil
 }
 
-func resolveJsonLink2(backendPort string) (*JoinLinkResponse, error) {
+func resolveJsonLink2(launchCtx *LaunchContext, backendPort string) (*JoinLinkResponse, error) {
 	var (
 		hostStatusUrl = "http://localhost:" + backendPort + "/codeWithMe/unattendedHostStatus?token=gitpod"
 		client        = http.Client{Timeout: 1 * time.Second}
@@ -467,11 +481,10 @@ func resolveJsonLink2(backendPort string) (*JoinLinkResponse, error) {
 		return nil, err
 	}
 	if len(jsonResp.Projects) > 0 {
-		return &JoinLinkResponse{AppPid: jsonResp.AppPid, JoinLink: jsonResp.Projects[0].JoinLink}, nil
-
+		return launchCtx.getCommonJoinLinkResponse(jsonResp.AppPid, jsonResp.Projects[0].JoinLink), nil
 	}
 	if len(jsonResp.JoinLink) > 0 {
-		return &JoinLinkResponse{AppPid: jsonResp.AppPid, JoinLink: jsonResp.JoinLink}, nil
+		return launchCtx.getCommonJoinLinkResponse(jsonResp.AppPid, jsonResp.JoinLink), nil
 	}
 	log.Error("failed to resolve JetBrains JoinLink")
 	return nil, xerrors.Errorf("failed to resolve JoinLink")
@@ -889,6 +902,7 @@ func updateVMOptions(
 	}
 */
 type ProductInfo struct {
+	BuildNumber string `json:"buildNumber"`
 	Version     string `json:"version"`
 	ProductCode string `json:"productCode"`
 }
@@ -1172,22 +1186,29 @@ func linkRemotePlugin(launchCtx *LaunchContext) error {
 		remotePluginsFolder = launchCtx.backendDir + "/plugins"
 	}
 	remotePluginDir := remotePluginsFolder + "/gitpod-remote"
-	_, err := os.Stat(remotePluginDir)
-	if err == nil || !errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
 	if err := os.MkdirAll(remotePluginsFolder, 0755); err != nil {
 		return err
 	}
 
 	// added for backwards compatibility, can be removed in the future
 	sourceDir := "/ide-desktop-plugins/gitpod-remote-" + os.Getenv("JETBRAINS_BACKEND_QUALIFIER")
-	_, err = os.Stat(sourceDir)
+	_, err := os.Stat(sourceDir)
 	if err == nil {
-		return os.Symlink(sourceDir, remotePluginDir)
+		return safeLink(sourceDir, remotePluginDir)
 	}
 
-	return os.Symlink("/ide-desktop-plugins/gitpod-remote", remotePluginDir)
+	return safeLink("/ide-desktop-plugins/gitpod-remote", remotePluginDir)
+}
+
+// safeLink creates a symlink from source to target, removing the old target if it exists
+func safeLink(source, target string) error {
+	if _, err := os.Lstat(target); err == nil {
+		// unlink the old symlink
+		if err2 := os.RemoveAll(target); err2 != nil {
+			log.WithError(err).Error("failed to unlink old symlink")
+		}
+	}
+	return os.Symlink(source, target)
 }
 
 // TODO(andreafalzetti): remove dir scanning once this is implemented https://youtrack.jetbrains.com/issue/GTW-2402/Rider-Open-Project-dialog-not-displaying-in-remote-dev
@@ -1248,19 +1269,22 @@ func configureToolboxCliProperties(backendDir string) error {
 
 	toolboxCliPropertiesFilePath := fmt.Sprintf("%s/environment.json", toolboxCliPropertiesDir)
 
+	debuggingToolbox := os.Getenv("GITPOD_TOOLBOX_DEBUGGING")
+	allowInstallation := strconv.FormatBool(strings.Contains(debuggingToolbox, "allowInstallation"))
+
 	// TODO(hw): restrict IDE installation
 	content := fmt.Sprintf(`{
     "tools": {
-        "allowInstallation": true,
+        "allowInstallation": %s,
         "allowUpdate": false,
-        "allowUninstallation": true,
+        "allowUninstallation": %s,
         "location": [
             {
                 "path": "%s"
             }
         ]
     }
-}`, backendDir)
+}`, allowInstallation, allowInstallation, backendDir)
 
 	return os.WriteFile(toolboxCliPropertiesFilePath, []byte(content), 0o644)
 }

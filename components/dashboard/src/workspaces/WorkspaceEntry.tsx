@@ -70,7 +70,7 @@ export const WorkspaceEntry: FunctionComponent<Props> = ({ info, shortVersion })
             <ItemFieldIcon className="min-w-8">
                 <WorkspaceStatusIndicator status={workspace?.status} />
             </ItemFieldIcon>
-            <div className="flex-grow flex flex-col h-full py-auto truncate">
+            <div className="flex-grow flex flex-col py-auto truncate">
                 <Tooltip content={info.id} allowWrap={true}>
                     <a href={startUrl}>
                         <div className="font-medium text-gray-800 dark:text-gray-200 truncate hover:text-blue-600 dark:hover:text-blue-400">
@@ -105,10 +105,22 @@ export const WorkspaceEntry: FunctionComponent<Props> = ({ info, shortVersion })
                         </div>
                     </div>
                     <div className="flex items-center">
+                        {/*
+                         * Tooltip for workspace last active time
+                         * Displays relative time (e.g. "2 days ago") as visible text
+                         * Shows exact date and time with GMT offset on hover
+                         * Uses dayjs for date formatting and relative time calculation
+                         * Handles potential undefined dates with fallback to current date
+                         * Removes leading zero from single-digit GMT hour offsets
+                         */}
                         <Tooltip
-                            content={`Last Activate ${dayjs(
-                                info.status!.phase!.lastTransitionTime!.toDate(),
-                            ).fromNow()}`}
+                            content={`Last active: ${dayjs(
+                                info.status?.phase?.lastTransitionTime?.toDate() ?? new Date(),
+                            ).format("MMM D, YYYY, h:mm A")} GMT${dayjs(
+                                info.status?.phase?.lastTransitionTime?.toDate() ?? new Date(),
+                            )
+                                .format("Z")
+                                .replace(/^([+-])0/, "$1")}`}
                             className="w-full"
                         >
                             <div className="text-sm w-full text-gray-400 overflow-ellipsis truncate">
