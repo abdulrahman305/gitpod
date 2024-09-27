@@ -138,6 +138,7 @@ import { ApplicationError, ErrorCodes } from "@gitpod/gitpod-protocol/lib/messag
 import { IDESettingsVersion } from "@gitpod/gitpod-protocol/lib/ide-protocol";
 import { getFeatureFlagEnableExperimentalJBTB } from "../util/featureflags";
 import { OrganizationService } from "../orgs/organization-service";
+import { ProjectsService } from "../projects/projects-service";
 
 export interface StartWorkspaceOptions extends Omit<GitpodServer.StartWorkspaceOptions, "ideSettings"> {
     excludeFeatureFlags?: NamedWorkspaceFeatureFlag[];
@@ -233,6 +234,7 @@ export class WorkspaceStarter {
         @inject(RedisPublisher) private readonly publisher: RedisPublisher,
         @inject(EnvVarService) private readonly envVarService: EnvVarService,
         @inject(OrganizationService) private readonly orgService: OrganizationService,
+        @inject(ProjectsService) private readonly projectService: ProjectsService,
     ) {}
 
     public async startWorkspace(
@@ -1616,7 +1618,6 @@ export class WorkspaceStarter {
             "function:guessGitTokenScopes",
             "function:updateGitStatus",
             "function:getWorkspaceEnvVars",
-            "function:getEnvVars", // TODO remove this after new gitpod-cli is deployed
             "function:setEnvVar",
             "function:deleteEnvVar",
             "function:getTeams",
@@ -1666,6 +1667,8 @@ export class WorkspaceStarter {
                     operations: ["create", "get"],
                 }),
         ];
+        // By intention, we only limit the token passed down to the workspace to the env vars scoped to that workspace.
+        // This is meant to maintain the "workspace as a unit of isolation" principle on the API level.
         if (CommitContext.is(workspace.context)) {
             const subjectID = workspace.context.repository.owner + "/" + workspace.context.repository.name;
             scopes.push(
@@ -1677,6 +1680,15 @@ export class WorkspaceStarter {
                     }),
             );
         }
+        // The only exception is "updates", which we allow to be made to all env vars (that exist).
+        scopes.push(
+            "resource:" +
+                ScopedResourceGuard.marshalResourceScope({
+                    kind: "envVar",
+                    subjectID: "*/*",
+                    operations: ["update"],
+                }),
+        );
         return scopes;
     }
 
@@ -1882,6 +1894,23 @@ export class WorkspaceStarter {
         }
 
         const result = new GitInitializer();
+        // Full clone repository for prebuild workspaces
+        if (workspace.type === "prebuild" && workspace.projectId) {
+            const isEnabledPrebuildFullClone = await getExperimentsClientForBackend().getValueAsync(
+                "enabled_configuration_prebuild_full_clone",
+                false,
+                {},
+            );
+            if (isEnabledPrebuildFullClone) {
+                const project = await this.projectService.getProject(user.id, workspace.projectId).catch((err) => {
+                    log.error("failed to get project", err);
+                    return undefined;
+                });
+                if (project && project.settings?.prebuilds?.cloneSettings?.fullClone) {
+                    result.setFullClone(true);
+                }
+            }
+        }
         result.setConfig(gitConfig);
         result.setCheckoutLocation(context.checkoutLocation || context.repository.name);
         if (!!cloneTarget) {

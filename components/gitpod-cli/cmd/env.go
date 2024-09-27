@@ -8,12 +8,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/xerrors"
@@ -27,6 +29,25 @@ import (
 
 var exportEnvs = false
 var unsetEnvs = false
+var scope = string(envScopeRepo)
+
+type envScope string
+
+var (
+	envScopeRepo envScope = "repo"
+	envScopeUser envScope = "user"
+)
+
+func envScopeFromString(s string) envScope {
+	switch s {
+	case string(envScopeRepo):
+		return envScopeRepo
+	case string(envScopeUser):
+		return envScopeUser
+	default:
+		return envScopeRepo
+	}
+}
 
 // envCmd represents the env command
 var envCmd = &cobra.Command{
@@ -67,7 +88,8 @@ delete environment variables with a repository pattern of */foo, foo/* or */*.
 			if unsetEnvs {
 				err = deleteEnvs(ctx, args)
 			} else {
-				err = setEnvs(ctx, args)
+				setEnvScope := envScopeFromString(scope)
+				err = setEnvs(ctx, setEnvScope, args)
 			}
 		} else {
 			err = getEnvs(ctx)
@@ -80,14 +102,15 @@ type connectToServerResult struct {
 	repositoryPattern string
 	wsInfo            *supervisorapi.WorkspaceInfoResponse
 	client            *serverapi.APIoverJSONRPC
-
-	useDeprecatedGetEnvVar bool
+	gitpodHost        string
 }
 
 type connectToServerOptions struct {
 	supervisorClient *supervisor.SupervisorClient
 	wsInfo           *api.WorkspaceInfoResponse
 	log              *log.Entry
+
+	setEnvScope envScope
 }
 
 func connectToServer(ctx context.Context, options *connectToServerOptions) (*connectToServerResult, error) {
@@ -123,7 +146,13 @@ func connectToServer(ctx context.Context, options *connectToServerOptions) (*con
 	}
 	repositoryPattern := wsinfo.Repository.Owner + "/" + wsinfo.Repository.Name
 
-	var useDeprecatedGetEnvVar bool
+	operations := "create/get/update/delete"
+	if options != nil && options.setEnvScope == envScopeUser {
+		// Updating user env vars requires a different token with a special scope
+		repositoryPattern = "*/*"
+		operations = "update"
+	}
+
 	clientToken, err := supervisorClient.Token.GetToken(ctx, &supervisorapi.GetTokenRequest{
 		Host: wsinfo.GitpodApi.Host,
 		Kind: "gitpod",
@@ -131,23 +160,9 @@ func connectToServer(ctx context.Context, options *connectToServerOptions) (*con
 			"function:getWorkspaceEnvVars",
 			"function:setEnvVar",
 			"function:deleteEnvVar",
-			"resource:envVar::" + repositoryPattern + "::create/get/update/delete",
+			"resource:envVar::" + repositoryPattern + "::" + operations,
 		},
 	})
-	if err != nil {
-		// TODO remove then GetWorkspaceEnvVars is deployed
-		clientToken, err = supervisorClient.Token.GetToken(ctx, &supervisorapi.GetTokenRequest{
-			Host: wsinfo.GitpodApi.Host,
-			Kind: "gitpod",
-			Scope: []string{
-				"function:getEnvVars", // TODO remove then getWorkspaceEnvVars is deployed
-				"function:setEnvVar",
-				"function:deleteEnvVar",
-				"resource:envVar::" + repositoryPattern + "::create/get/update/delete",
-			},
-		})
-		useDeprecatedGetEnvVar = true
-	}
 	if err != nil {
 		return nil, xerrors.Errorf("failed getting token from supervisor: %w", err)
 	}
@@ -165,7 +180,7 @@ func connectToServer(ctx context.Context, options *connectToServerOptions) (*con
 	if err != nil {
 		return nil, xerrors.Errorf("failed connecting to server: %w", err)
 	}
-	return &connectToServerResult{repositoryPattern, wsinfo, client, useDeprecatedGetEnvVar}, nil
+	return &connectToServerResult{repositoryPattern, wsinfo, client, wsinfo.GitpodHost}, nil
 }
 
 func getWorkspaceEnvs(ctx context.Context, options *connectToServerOptions) ([]*serverapi.EnvVar, error) {
@@ -175,10 +190,7 @@ func getWorkspaceEnvs(ctx context.Context, options *connectToServerOptions) ([]*
 	}
 	defer result.client.Close()
 
-	if !result.useDeprecatedGetEnvVar {
-		return result.client.GetWorkspaceEnvVars(ctx, result.wsInfo.WorkspaceId)
-	}
-	return result.client.GetEnvVars(ctx)
+	return result.client.GetWorkspaceEnvVars(ctx, result.wsInfo.WorkspaceId)
 }
 
 func getEnvs(ctx context.Context) error {
@@ -194,8 +206,11 @@ func getEnvs(ctx context.Context) error {
 	return nil
 }
 
-func setEnvs(ctx context.Context, args []string) error {
-	result, err := connectToServer(ctx, nil)
+func setEnvs(ctx context.Context, setEnvScope envScope, args []string) error {
+	options := connectToServerOptions{
+		setEnvScope: setEnvScope,
+	}
+	result, err := connectToServer(ctx, &options)
 	if err != nil {
 		return err
 	}
@@ -212,6 +227,11 @@ func setEnvs(ctx context.Context, args []string) error {
 		g.Go(func() error {
 			err = result.client.SetEnvVar(ctx, v)
 			if err != nil {
+				if ferr, ok := err.(*jsonrpc2.Error); ok && ferr.Code == http.StatusForbidden && setEnvScope == envScopeUser {
+					return fmt.Errorf(""+
+						"Can't automatically create env var `%s` for security reasons.\n"+
+						"Please create the var manually under %s/user/variables using Name=%s, Scope=*/*, Value=foobar", v.Name, result.gitpodHost, v.Name)
+				}
 				return err
 			}
 			printVar(v.Name, v.Value, exportEnvs)
@@ -291,4 +311,5 @@ func init() {
 
 	envCmd.Flags().BoolVarP(&exportEnvs, "export", "e", false, "produce a script that can be eval'ed in Bash")
 	envCmd.Flags().BoolVarP(&unsetEnvs, "unset", "u", false, "deletes/unsets persisted environment variables")
+	envCmd.Flags().StringVarP(&scope, "scope", "s", "repo", "deletes/unsets persisted environment variables")
 }

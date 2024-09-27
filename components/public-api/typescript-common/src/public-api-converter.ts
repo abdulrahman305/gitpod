@@ -77,6 +77,7 @@ import {
     PrebuildTriggerStrategy,
     PrebuildSettings,
     WorkspaceSettings,
+    PrebuildCloneSettings,
 } from "@gitpod/public-api/lib/gitpod/v1/configuration_pb";
 import { EditorReference } from "@gitpod/public-api/lib/gitpod/v1/editor_pb";
 import {
@@ -86,6 +87,7 @@ import {
     UserEnvironmentVariable,
 } from "@gitpod/public-api/lib/gitpod/v1/envvar_pb";
 import {
+    CellDisabledError,
     FailedPreconditionDetails,
     ImageBuildLogsNotYetAvailableError,
     InvalidCostCenterError as InvalidCostCenterErrorData,
@@ -648,6 +650,22 @@ export class PublicAPIConverter {
             if (reason.code === ErrorCodes.INTERNAL_SERVER_ERROR) {
                 return new ConnectError(reason.message, Code.Internal, undefined, undefined, reason);
             }
+            if (reason.code === ErrorCodes.CELL_EXPIRED) {
+                return new ConnectError(
+                    reason.message,
+                    Code.FailedPrecondition,
+                    undefined,
+                    [
+                        new FailedPreconditionDetails({
+                            reason: {
+                                case: "cellIsDisabled",
+                                value: new CellDisabledError(),
+                            },
+                        }),
+                    ],
+                    reason,
+                );
+            }
             return new ConnectError(reason.message, Code.Unknown, undefined, undefined, reason);
         }
         return new ConnectError(`Oops! Something went wrong.`, Code.Internal, undefined, undefined, reason);
@@ -702,6 +720,8 @@ export class PublicAPIConverter {
                     return new ApplicationError(ErrorCodes.HEADLESS_LOG_NOT_YET_AVAILABLE, reason.rawMessage);
                 case "tooManyRunningWorkspaces":
                     return new ApplicationError(ErrorCodes.TOO_MANY_RUNNING_WORKSPACES, reason.rawMessage);
+                case "cellIsDisabled":
+                    return new ApplicationError(ErrorCodes.CELL_EXPIRED, reason.rawMessage);
             }
             return new ApplicationError(ErrorCodes.PRECONDITION_FAILED, reason.rawMessage);
         }
@@ -996,6 +1016,7 @@ export class PublicAPIConverter {
             result.branchStrategy = this.fromBranchMatchingStrategy(prebuilds.branchStrategy);
             result.prebuildInterval = prebuilds.prebuildInterval;
             result.workspaceClass = prebuilds.workspaceClass;
+            result.cloneSettings = this.fromPrebuildCloneSettings(prebuilds.cloneSettings);
         }
         return result;
     }
@@ -1076,6 +1097,7 @@ export class PublicAPIConverter {
             result.prebuildInterval = prebuilds.prebuildInterval ?? 20;
             result.workspaceClass = prebuilds.workspaceClass ?? "";
             result.triggerStrategy = this.toPrebuildTriggerStrategy(prebuilds.triggerStrategy);
+            result.cloneSettings = this.toPrebuildCloneSettings(prebuilds.cloneSettings);
         }
         return result;
     }
@@ -1101,6 +1123,18 @@ export class PublicAPIConverter {
             default:
                 return PrebuildTriggerStrategy.UNSPECIFIED;
         }
+    }
+
+    fromPrebuildCloneSettings(settings?: DeepPartial<PrebuildCloneSettings>): PrebuildSettingsProtocol.CloneSettings {
+        return {
+            fullClone: settings?.fullClone ?? false,
+        };
+    }
+
+    toPrebuildCloneSettings(settings?: PrebuildSettingsProtocol.CloneSettings): PrebuildCloneSettings {
+        return new PrebuildCloneSettings({
+            fullClone: settings?.fullClone ?? false,
+        });
     }
 
     toWorkspaceSettings(projectSettings: ProjectSettings | undefined): WorkspaceSettings {

@@ -311,7 +311,7 @@ RUN curl -fsSL "https://get.sdkman.io" | bash \
 # above, we are adding the sdkman init to .bashrc (executing sdkman-init.sh does that), because one is executed on interactive shells, the other for non-interactive shells (e.g. plugin-host)
 ENV GRADLE_USER_HOME=/workspace/.gradle/
 
-ENV NODE_VERSION=18.18.2
+ENV NODE_VERSION=18.20.4
 
 ENV PNPM_HOME=/root/.pnpm
 ENV PATH=/root/.nvm/versions/node/v${NODE_VERSION}/bin:/root/.yarn/bin:${PNPM_HOME}:$PATH
@@ -341,5 +341,5 @@ ENV PRE_COMMIT_HOME=/workspace/.pre-commit
 
 # Setting the environment variable here so that it will be accessible to all tasks and
 # terminal sessions in Gitpod workspaces.
-ENV PREVIEW_ENV_DEV_SA_KEY_PATH=/root/.config/gcloud/sa.json
+ENV PREVIEW_ENV_DEV_SA_KEY_PATH=
 ENV GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1

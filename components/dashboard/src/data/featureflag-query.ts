@@ -7,7 +7,6 @@
 import { getPrimaryEmail } from "@gitpod/public-api-common/lib/user-utils";
 import { useQuery } from "@tanstack/react-query";
 import { getExperimentsClient } from "../experiments/client";
-import { useCurrentProject } from "../projects/project-context";
 import { useCurrentUser } from "../user-context";
 import { useCurrentOrg } from "./organizations/orgs-query";
 
@@ -25,6 +24,7 @@ const featureFlags = {
     dataops: false,
     showBrowserExtensionPromotion: false,
     enable_experimental_jbtb: false,
+    enabled_configuration_prebuild_full_clone: false,
 };
 
 type FeatureFlags = typeof featureFlags;
@@ -32,9 +32,8 @@ type FeatureFlags = typeof featureFlags;
 export const useFeatureFlag = <K extends keyof FeatureFlags>(featureFlag: K): FeatureFlags[K] | boolean => {
     const user = useCurrentUser();
     const org = useCurrentOrg().data;
-    const project = useCurrentProject().project;
 
-    const queryKey = ["featureFlag", featureFlag, user?.id || "", org?.id || "", project?.id || ""];
+    const queryKey = ["featureFlag", featureFlag, user?.id || "", org?.id || ""];
 
     const query = useQuery(queryKey, async () => {
         const flagValue = await getExperimentsClient().getValueAsync(featureFlag, featureFlags[featureFlag], {
@@ -42,7 +41,6 @@ export const useFeatureFlag = <K extends keyof FeatureFlags>(featureFlag: K): Fe
                 id: user.id,
                 email: getPrimaryEmail(user),
             },
-            projectId: project?.id,
             teamId: org?.id,
             teamName: org?.name,
             gitpodHost: window.location.host,

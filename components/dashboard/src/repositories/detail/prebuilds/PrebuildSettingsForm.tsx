@@ -12,6 +12,7 @@ import {
 import { FC, FormEvent, useCallback, useMemo, useState } from "react";
 import { ConfigurationSettingsField } from "../ConfigurationSettingsField";
 import { Heading3, Subheading } from "@podkit/typography/Headings";
+import { Text } from "@podkit/typography/Text";
 import { InputField } from "../../../components/forms/InputField";
 import { PartialConfiguration, useConfigurationMutation } from "../../../data/configurations/configuration-queries";
 import { useToast } from "../../../components/toasts/Toasts";
@@ -26,6 +27,10 @@ import { useUserLoader } from "../../../hooks/use-user-loader";
 import { useUpdateCurrentUserMutation } from "../../../data/current-user/update-mutation";
 import { trackEvent } from "../../../Analytics";
 import dayjs from "dayjs";
+import { SwitchInputField } from "@podkit/switch/Switch";
+import { useFeatureFlag } from "../../../data/featureflag-query";
+import { TextMuted } from "@podkit/typography/TextMuted";
+import { InfoIcon } from "lucide-react";
 
 const DEFAULT_PREBUILD_COMMIT_INTERVAL = 20;
 
@@ -40,6 +45,7 @@ export const PrebuildSettingsForm: FC<Props> = ({ configuration }) => {
 
     const { user } = useUserLoader();
     const { mutate: updateUser } = useUpdateCurrentUserMutation();
+    const isEnabledPrebuildFullClone = useFeatureFlag("enabled_configuration_prebuild_full_clone");
 
     const updateConfiguration = useConfigurationMutation();
 
@@ -54,6 +60,9 @@ export const PrebuildSettingsForm: FC<Props> = ({ configuration }) => {
     );
     const [workspaceClass, setWorkspaceClass] = useState<string>(
         configuration.prebuildSettings?.workspaceClass || DEFAULT_WS_CLASS,
+    );
+    const [fullClone, setFullClone] = useState<boolean>(
+        configuration.prebuildSettings?.cloneSettings?.fullClone ?? false,
     );
 
     const [isTriggerNotificationOpen, setIsTriggerNotificationOpen] = useState(true);
@@ -72,6 +81,9 @@ export const PrebuildSettingsForm: FC<Props> = ({ configuration }) => {
                     branchStrategy,
                     branchMatchingPattern,
                     workspaceClass,
+                    cloneSettings: {
+                        fullClone,
+                    },
                 },
             };
 
@@ -90,6 +102,7 @@ export const PrebuildSettingsForm: FC<Props> = ({ configuration }) => {
             toast,
             updateConfiguration,
             workspaceClass,
+            fullClone,
         ],
     );
 
@@ -199,6 +212,36 @@ export const PrebuildSettingsForm: FC<Props> = ({ configuration }) => {
                         onChange={setBranchMatchingPattern}
                     />
                 )}
+
+                {isEnabledPrebuildFullClone && (
+                    <InputField
+                        label="Clone repositories in full"
+                        hint="Make prebuilds fully clone the repository, maintaining the entire git history for use in prebuilds and workspaces."
+                    >
+                        <SwitchInputField
+                            id="prebuild-full-clone-enabled"
+                            checked={fullClone}
+                            onCheckedChange={setFullClone}
+                            label=""
+                        />
+                    </InputField>
+                )}
+
+                <div className="mt-4">
+                    <Text className="font-semibold text-md text-pk-content-secondary">Prebuild trigger strategy</Text>
+                    <TextMuted className="text-sm mt-1 flex flex-row gap-1 items-center">
+                        {configuration.prebuildSettings?.triggerStrategy === PrebuildTriggerStrategy.ACTIVITY_BASED
+                            ? "Activity-based"
+                            : "Webhook-based"}
+                        <a
+                            href="https://www.gitpod.io/docs/configure/repositories/prebuilds#triggers"
+                            target="_blank"
+                            rel="noreferrer"
+                        >
+                            <InfoIcon size={14} />
+                        </a>
+                    </TextMuted>
+                </div>
 
                 <Heading3 className="mt-8">Machine type</Heading3>
                 <Subheading>Choose the workspace machine type for your prebuilds.</Subheading>

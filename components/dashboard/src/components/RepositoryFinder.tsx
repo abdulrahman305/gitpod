@@ -11,12 +11,26 @@ import { ReactComponent as RepositoryIcon } from "../icons/RepositoryWithColor.s
 import { ReactComponent as GitpodRepositoryTemplate } from "../icons/GitpodRepositoryTemplate.svg";
 import GitpodRepositoryTemplateSVG from "../icons/GitpodRepositoryTemplate.svg";
 import { MiddleDot } from "./typography/MiddleDot";
-import { useUnifiedRepositorySearch } from "../data/git-providers/unified-repositories-search-query";
+import {
+    deduplicateAndFilterRepositories,
+    flattenPagedConfigurations,
+    useUnifiedRepositorySearch,
+} from "../data/git-providers/unified-repositories-search-query";
 import { useAuthProviderDescriptions } from "../data/auth-providers/auth-provider-descriptions-query";
 import { ReactComponent as Exclamation2 } from "../images/exclamation2.svg";
 import { AuthProviderType } from "@gitpod/public-api/lib/gitpod/v1/authprovider_pb";
 import { SuggestedRepository } from "@gitpod/public-api/lib/gitpod/v1/scm_pb";
 import { PREDEFINED_REPOS } from "../data/git-providers/predefined-repos";
+import { useConfiguration, useListConfigurations } from "../data/configurations/configuration-queries";
+
+const isPredefined = (repo: SuggestedRepository): boolean => {
+    return PREDEFINED_REPOS.some((predefined) => predefined.url === repo.url) && !repo.configurationId;
+};
+
+const resolveIcon = (contextUrl?: string): string => {
+    if (!contextUrl) return RepositorySVG;
+    return PREDEFINED_REPOS.some((repo) => repo.url === contextUrl) ? GitpodRepositoryTemplateSVG : RepositorySVG;
+};
 
 interface RepositoryFinderProps {
     selectedContextURL?: string;
@@ -41,7 +55,7 @@ export default function RepositoryFinder({
 }: RepositoryFinderProps) {
     const [searchString, setSearchString] = useState("");
     const {
-        data: repos,
+        data: unifiedRepos,
         isLoading,
         isSearching,
         hasMore,
@@ -49,16 +63,62 @@ export default function RepositoryFinder({
         searchString,
         excludeConfigurations,
         onlyConfigurations,
-        showExamples,
     });
 
-    const authProviders = useAuthProviderDescriptions();
+    // We search for the current context URL in order to have data for the selected suggestion
+    const selectedItemSearch = useListConfigurations({
+        sortBy: "name",
+        sortOrder: "desc",
+        pageSize: 30,
+        searchTerm: selectedContextURL,
+    });
+    const flattenedSelectedItem = useMemo(() => {
+        if (excludeConfigurations) {
+            return [];
+        }
 
-    // This approach creates a memoized Map of the predefined repos,
-    // which can be more efficient for lookups if we would have a large number of predefined repos
-    const memoizedPredefinedRepos = useMemo(() => {
-        return new Map(PREDEFINED_REPOS.map((repo) => [repo.url, repo]));
-    }, []);
+        const flattened = flattenPagedConfigurations(selectedItemSearch.data);
+        return flattened.map(
+            (repo) =>
+                new SuggestedRepository({
+                    configurationId: repo.id,
+                    configurationName: repo.name,
+                    url: repo.cloneUrl,
+                }),
+        );
+    }, [excludeConfigurations, selectedItemSearch.data]);
+
+    // We get the configuration by ID if one is selected
+    const selectedConfiguration = useConfiguration(selectedConfigurationId);
+    const selectedConfigurationSuggestion = useMemo(() => {
+        if (!selectedConfiguration.data) {
+            return undefined;
+        }
+
+        return new SuggestedRepository({
+            configurationId: selectedConfiguration.data.id,
+            configurationName: selectedConfiguration.data.name,
+            url: selectedConfiguration.data.cloneUrl,
+        });
+    }, [selectedConfiguration.data]);
+
+    const repos = useMemo(() => {
+        return deduplicateAndFilterRepositories(
+            searchString,
+            excludeConfigurations,
+            onlyConfigurations,
+            [unifiedRepos, selectedConfigurationSuggestion, flattenedSelectedItem].flat().filter((r) => !!r),
+        );
+    }, [
+        searchString,
+        excludeConfigurations,
+        onlyConfigurations,
+        selectedConfigurationSuggestion,
+        flattenedSelectedItem,
+        unifiedRepos,
+    ]);
+
+    const authProviders = useAuthProviderDescriptions();
 
     const handleSelectionChange = useCallback(
         (selectedID: string) => {
@@ -71,7 +131,7 @@ export default function RepositoryFinder({
                 return;
             }
 
-            const matchingPredefinedRepo = memoizedPredefinedRepos.get(selectedID);
+            const matchingPredefinedRepo = PREDEFINED_REPOS.find((repo) => repo.url === selectedID);
             if (matchingPredefinedRepo) {
                 onChange?.(
                     new SuggestedRepository({
@@ -84,7 +144,7 @@ export default function RepositoryFinder({
 
             onChange?.(new SuggestedRepository({ url: selectedID }));
         },
-        [onChange, repos, memoizedPredefinedRepos],
+        [onChange, repos],
     );
 
     const [selectedSuggestion, setSelectedSuggestion] = useState<SuggestedRepository | undefined>(undefined);
@@ -92,12 +152,7 @@ export default function RepositoryFinder({
     const [isShowingExamples, setIsShowingExamples] = useState(showExamples);
 
     type PredefinedRepositoryOptionProps = {
-        repo: {
-            url: string;
-            repoName: string;
-            description: string;
-            repoPath: string;
-        };
+        repo: typeof PREDEFINED_REPOS[number];
     };
 
     const PredefinedRepositoryOption: FC<PredefinedRepositoryOptionProps> = ({ repo }) => {
@@ -124,6 +179,11 @@ export default function RepositoryFinder({
         let match = repos?.find((repo) => {
             if (selectedConfigurationId) {
                 return repo.configurationId === selectedConfigurationId;
+            }
+
+            // todo(ft): normalize this more centrally
+            if (repo.url.endsWith(".git")) {
+                repo.url = repo.url.slice(0, -4);
             }
 
             return repo.url === selectedContextURL;
@@ -172,6 +232,10 @@ export default function RepositoryFinder({
             return;
         }
 
+        if (isPredefined(selectedSuggestion)) {
+            return PREDEFINED_REPOS.find((repo) => repo.url === selectedSuggestion.url)?.repoName;
+        }
+
         if (!selectedSuggestion?.configurationName) {
             return displayContextUrl(selectedSuggestion?.repoName || selectedSuggestion?.url);
         }
@@ -193,7 +257,7 @@ export default function RepositoryFinder({
 
     const getElements = useCallback(
         (searchString: string): ComboboxElement[] => {
-            if (isShowingExamples && searchString.length === 0 && !onlyConfigurations) {
+            if (isShowingExamples && !onlyConfigurations) {
                 return PREDEFINED_REPOS.map((repo) => ({
                     id: repo.url,
                     element: <PredefinedRepositoryOption repo={repo} />,
@@ -201,11 +265,14 @@ export default function RepositoryFinder({
                 }));
             }
 
-            const result = repos.map((repo) => ({
-                id: repo.configurationId || repo.url,
-                element: <SuggestedRepositoryOption repo={repo} />,
-                isSelectable: true,
-            }));
+            // We deduplicate predefined repos, because we artificially add them to the list just below
+            const result = repos
+                .filter((repo) => !isPredefined(repo))
+                .map((repo) => ({
+                    id: repo.configurationId || repo.url,
+                    element: <SuggestedRepositoryOption repo={repo} />,
+                    isSelectable: true,
+                }));
 
             if (!onlyConfigurations) {
                 // Add predefined repos to end of the list.
@@ -268,11 +335,6 @@ export default function RepositoryFinder({
         },
         [repos, hasMore, authProviders.data, onlyConfigurations, isShowingExamples],
     );
-
-    const resolveIcon = useCallback((contextUrl?: string) => {
-        if (!contextUrl) return RepositorySVG;
-        return PREDEFINED_REPOS.some((repo) => repo.url === contextUrl) ? GitpodRepositoryTemplateSVG : RepositorySVG;
-    }, []);
 
     return (
         <Combobox
