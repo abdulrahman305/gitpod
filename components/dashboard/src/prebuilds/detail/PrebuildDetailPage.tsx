@@ -296,7 +296,7 @@ export const PrebuildDetailPage: FC = () => {
                                 <div className="py-4 px-6 flex flex-col gap-1">
                                     <PrebuildStatus prebuild={prebuild} />
                                     {prebuild?.status?.message && (
-                                        <div className="text-pk-content-secondary truncate">
+                                        <div className="text-pk-content-secondary line-clamp-2">
                                             {prebuild?.status.message}
                                         </div>
                                     )}
@@ -361,15 +361,13 @@ export const PrebuildDetailPage: FC = () => {
                                     >
                                         View Prebuild Settings
                                     </LinkButton>
-                                    <Button
+                                    <LinkButton
                                         disabled={prebuild?.status?.phase?.name !== PrebuildPhase_Phase.AVAILABLE}
-                                        onClick={() =>
-                                            (window.location.href = `/#open-prebuild/${prebuild?.id}/${prebuild?.contextUrl}`)
-                                        }
+                                        href={`/#open-prebuild/${prebuild?.id}/${prebuild?.contextUrl}`}
                                         variant="secondary"
                                     >
                                         Open Debug Workspace
-                                    </Button>
+                                    </LinkButton>
                                 </div>
                             </div>
                         </div>

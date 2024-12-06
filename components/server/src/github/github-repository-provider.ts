@@ -130,7 +130,7 @@ export class GithubRepositoryProvider implements RepositoryProvider {
             }
 
             // TODO(janx): To get more results than GitHub API's max page size (seems to be 100), pagination should be handled.
-            // These additional history properties may be helfpul:
+            // These additional history properties may be helpful:
             //     totalCount,
             //     pageInfo {
             //         haxNextPage,
@@ -215,19 +215,20 @@ export class GithubRepositoryProvider implements RepositoryProvider {
               }`,
         );
 
-        let repos: RepositoryInfo[] = [];
-
+        const repos: RepositoryInfo[] = [];
         for (const type of ["contributedTo", "original", "forked"]) {
             const nodes = result.data.viewer[type]?.nodes;
             if (nodes) {
-                repos = nodes.map((n: any): RepositoryInfo => {
+                const reposInSection: RepositoryInfo[] = nodes.map((n: any) => {
                     return {
                         name: n.name,
                         url: n.url,
                     };
                 });
+                repos.push(...reposInSection);
             }
         }
+
         return repos;
     }
 
@@ -261,10 +262,8 @@ export class GithubRepositoryProvider implements RepositoryProvider {
                 }
             }`;
 
-        let repos: RepositoryInfo[] = [];
-
         const result = await this.githubQueryApi.runQuery<SearchReposQueryResponse>(user, repoSearchQuery);
-        repos = result.data.search.edges.map((edge) => {
+        const repos: RepositoryInfo[] = result.data.search.edges.map((edge) => {
             return {
                 name: edge.node.name,
                 url: edge.node.url,

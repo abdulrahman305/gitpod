@@ -801,6 +801,7 @@ export interface WorkspaceConfig {
     jetbrains?: JetBrainsConfig;
     coreDump?: CoreDumpConfig;
     ideCredentials?: string;
+    env?: { [env: string]: any };
 
     /** deprecated. Enabled by default **/
     experimentalNetwork?: boolean;
@@ -1017,6 +1018,8 @@ export interface WorkspaceContext {
     normalizedContextURL?: string;
     forceCreateNewWorkspace?: boolean;
     forceImageBuild?: boolean;
+    // The context can have non-blocking warnings that should be displayed to the user.
+    warnings?: string[];
 }
 
 export namespace WorkspaceContext {

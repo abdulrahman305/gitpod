@@ -140,6 +140,7 @@ import { IDESettingsVersion } from "@gitpod/gitpod-protocol/lib/ide-protocol";
 import { getFeatureFlagEnableExperimentalJBTB } from "../util/featureflags";
 import { OrganizationService } from "../orgs/organization-service";
 import { ProjectsService } from "../projects/projects-service";
+import { ImageFileRevisionMissing } from "../repohost";
 
 export interface StartWorkspaceOptions extends Omit<GitpodServer.StartWorkspaceOptions, "ideSettings"> {
     excludeFeatureFlags?: NamedWorkspaceFeatureFlag[];
@@ -275,6 +276,17 @@ export class WorkspaceStarter {
                     workspace.context as CommitContext,
                     workspace.config,
                 );
+                if (
+                    WorkspaceImageSourceDocker.is(imageSource) &&
+                    imageSource.dockerFileHash === ImageFileRevisionMissing
+                ) {
+                    const revision = (workspace.context as CommitContext).revision;
+                    // we let the workspace create here and let it fail to build the image
+                    imageSource.dockerFileHash = revision;
+                    if (imageSource.dockerFileSource) {
+                        imageSource.dockerFileSource.revision = revision;
+                    }
+                }
                 log.debug("Found workspace without imageSource, generated one", { imageSource });
 
                 workspace.imageSource = imageSource;
@@ -402,6 +414,7 @@ export class WorkspaceStarter {
                             workspace.projectId,
                             workspace.type,
                             workspace.context,
+                            workspace.config,
                         );
 
                         await this.actuallyStartWorkspace(ctx, instance, workspace, user, envVars);
@@ -490,7 +503,7 @@ export class WorkspaceStarter {
             client = await this.clientProvider.get(instanceRegion);
         } catch (err) {
             log.error({ instanceId }, "cannot stop workspace instance", err);
-            // we want to stop a workspace but the region doesn't exist. So we can assume it doesn't run anyymore and there will never be updates coming to bridge.
+            // we want to stop a workspace but the region doesn't exist. So we can assume it doesn't run anymore and there will never be updates coming to bridge.
             // let's mark this workspace as stopped if it is not already stopped.
             const workspace = await this.workspaceDb.trace(ctx).findByInstanceId(instanceId);
             const instance = await this.workspaceDb.trace(ctx).findInstanceById(instanceId);
@@ -565,8 +578,8 @@ export class WorkspaceStarter {
             return;
         }
 
-        // implicit project (existing on the same clone URL)
-        const projects = await this.projectService.findProjectsByCloneUrl(user.id, contextURL, organizationId);
+        // implicit project (existing on the same clone URL). We skip the permission check so that collaborators are not stuck
+        const projects = await this.projectService.findProjectsByCloneUrl(user.id, contextURL, organizationId, true);
         if (projects.length === 0) {
             throw new ApplicationError(
                 ErrorCodes.PRECONDITION_FAILED,
@@ -843,7 +856,7 @@ export class WorkspaceStarter {
 
     /**
      * failInstanceStart properly fails a workspace instance if something goes wrong before the instance ever reaches
-     * workspace manager. In this case we need to make sure we also fulfil the tasks of the bridge (e.g. for prebulds).
+     * workspace manager. In this case we need to make sure we also fulfil the tasks of the bridge (e.g. for prebuilds).
      */
     private async failInstanceStart(ctx: TraceContext, err: any, workspace: Workspace, instance: WorkspaceInstance) {
         if (ctxIsAborted()) {
@@ -1344,7 +1357,10 @@ export class WorkspaceStarter {
                     `workspace image build failed: ${message}`,
                     { looksLikeUserError: true },
                 );
-                err = new StartInstanceError("imageBuildFailedUser", err);
+                err = new StartInstanceError(
+                    "imageBuildFailedUser",
+                    `workspace image build failed: ${message}. For further logs, try executing \`gp validate\` inside of a workspace`,
+                );
                 // Don't report this as "failed" to our metrics as it would trigger an alert
             } else {
                 log.error(
@@ -1552,16 +1568,20 @@ export class WorkspaceStarter {
         sysEnvvars.push(orgIdEnv);
 
         const client = getExperimentsClientForBackend();
-        const [isSetJavaXmx, isSetJavaProcessorCount] = await Promise.all([
+        const [isSetJavaXmx, isSetJavaProcessorCount, disableJetBrainsLocalPortForwarding] = await Promise.all([
             client
                 .getValueAsync("supervisor_set_java_xmx", false, { user })
                 .then((v) => newEnvVar("GITPOD_IS_SET_JAVA_XMX", String(v))),
             client
                 .getValueAsync("supervisor_set_java_processor_count", false, { user })
                 .then((v) => newEnvVar("GITPOD_IS_SET_JAVA_PROCESSOR_COUNT", String(v))),
+            client
+                .getValueAsync("disable_jetbrains_local_port_forwarding", false, { user })
+                .then((v) => newEnvVar("GITPOD_DISABLE_JETBRAINS_LOCAL_PORT_FORWARDING", String(v))),
         ]);
         sysEnvvars.push(isSetJavaXmx);
         sysEnvvars.push(isSetJavaProcessorCount);
+        sysEnvvars.push(disableJetBrainsLocalPortForwarding);
         const spec = new StartWorkspaceSpec();
         await createGitpodTokenPromise;
         spec.setEnvvarsList(envvars);
@@ -1713,6 +1733,15 @@ export class WorkspaceStarter {
             );
         }
         // The only exception is "updates", which we allow to be made to all env vars (that exist).
+        scopes.push(
+            "resource:" +
+                ScopedResourceGuard.marshalResourceScope({
+                    kind: "envVar",
+                    subjectID: "*/**",
+                    operations: ["update"],
+                }),
+        );
+        // For updating environment variables created with */* instead of */**, we fall back to updating those
         scopes.push(
             "resource:" +
                 ScopedResourceGuard.marshalResourceScope({
@@ -1934,10 +1963,12 @@ export class WorkspaceStarter {
                 {},
             );
             if (isEnabledPrebuildFullClone) {
-                const project = await this.projectService.getProject(user.id, workspace.projectId).catch((err) => {
-                    log.error("failed to get project", err);
-                    return undefined;
-                });
+                const project = await this.projectService
+                    .getProject(user.id, workspace.projectId, true)
+                    .catch((err) => {
+                        log.error("failed to get project", err);
+                        return undefined;
+                    });
                 if (project && project.settings?.prebuilds?.cloneSettings?.fullClone) {
                     result.setFullClone(true);
                 }

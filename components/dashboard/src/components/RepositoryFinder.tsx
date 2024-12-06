@@ -22,6 +22,8 @@ import { AuthProviderType } from "@gitpod/public-api/lib/gitpod/v1/authprovider_
 import { SuggestedRepository } from "@gitpod/public-api/lib/gitpod/v1/scm_pb";
 import { PREDEFINED_REPOS } from "../data/git-providers/predefined-repos";
 import { useConfiguration, useListConfigurations } from "../data/configurations/configuration-queries";
+import { useUserLoader } from "../hooks/use-user-loader";
+import { conjunctScmProviders, getDeduplicatedScmProviders } from "../utils";
 
 const isPredefined = (repo: SuggestedRepository): boolean => {
     return PREDEFINED_REPOS.some((predefined) => predefined.url === repo.url) && !repo.configurationId;
@@ -54,6 +56,8 @@ export default function RepositoryFinder({
     onChange,
 }: RepositoryFinderProps) {
     const [searchString, setSearchString] = useState("");
+
+    const { user } = useUserLoader();
     const {
         data: unifiedRepos,
         isLoading,
@@ -119,6 +123,12 @@ export default function RepositoryFinder({
     ]);
 
     const authProviders = useAuthProviderDescriptions();
+
+    const usedProviders = useMemo(() => {
+        if (!user || !authProviders.data) return [];
+
+        return getDeduplicatedScmProviders(user, authProviders.data) ?? [];
+    }, [user, authProviders]);
 
     const handleSelectionChange = useCallback(
         (selectedID: string) => {
@@ -255,10 +265,19 @@ export default function RepositoryFinder({
         }
     };
 
+    const filteredPredefinedRepos = useMemo(() => {
+        return PREDEFINED_REPOS.filter((repo) => {
+            const url = new URL(repo.url);
+            const isMatchingAuthProviderAvailable =
+                authProviders.data?.some((provider) => provider.host === url.host) ?? false;
+            return isMatchingAuthProviderAvailable;
+        });
+    }, [authProviders.data]);
+
     const getElements = useCallback(
         (searchString: string): ComboboxElement[] => {
             if (isShowingExamples && !onlyConfigurations) {
-                return PREDEFINED_REPOS.map((repo) => ({
+                return filteredPredefinedRepos.map((repo) => ({
                     id: repo.url,
                     element: <PredefinedRepositoryOption repo={repo} />,
                     isSelectable: true,
@@ -276,7 +295,7 @@ export default function RepositoryFinder({
 
             if (!onlyConfigurations) {
                 // Add predefined repos to end of the list.
-                PREDEFINED_REPOS.forEach((repo) => {
+                filteredPredefinedRepos.forEach((repo) => {
                     if (
                         repo.url.toLowerCase().includes(searchString.toLowerCase()) ||
                         repo.repoName.toLowerCase().includes(searchString.toLowerCase())
@@ -301,9 +320,9 @@ export default function RepositoryFinder({
             }
 
             if (
-                searchString.length >= 3 &&
-                authProviders.data?.some((p) => p.type === AuthProviderType.BITBUCKET_SERVER) &&
-                !onlyConfigurations
+                !onlyConfigurations &&
+                searchString.length > 0 &&
+                authProviders.data?.some((p) => p.type === AuthProviderType.BITBUCKET_SERVER)
             ) {
                 // add an element that tells the user that the Bitbucket Server does only support prefix search
                 result.push({
@@ -318,8 +337,56 @@ export default function RepositoryFinder({
                 });
             }
 
-            if (searchString.length >= 3 && authProviders.data?.some((p) => p.type === AuthProviderType.AZURE_DEVOPS)) {
-                // ENT-780
+            if (
+                !onlyConfigurations &&
+                searchString.length > 0 &&
+                searchString.length < 3 &&
+                usedProviders.includes("GitLab")
+            ) {
+                // add an element that tells the user that GitLab only does exact searches for short queries
+                result.push({
+                    id: "gitlab",
+                    element: (
+                        <div className="text-sm text-pk-content-tertiary flex items-center">
+                            <Exclamation2 className="w-4 h-4 mr-2" />
+                            <span>
+                                Search text is &lt; 3 characters. GitLab will only show exact matches for short
+                                searches.
+                            </span>
+                        </div>
+                    ),
+                    isSelectable: false,
+                });
+            }
+
+            const setupProvidersWithoutPathSearchSupport = usedProviders.filter((p) =>
+                ["Bitbucket", "GitLab"].includes(p),
+            );
+            if (
+                !onlyConfigurations &&
+                searchString.length > 1 &&
+                setupProvidersWithoutPathSearchSupport.length > 0 &&
+                searchString.includes("/")
+            ) {
+                result.push({
+                    id: "whole-path-matching-unsupported",
+                    element: (
+                        <div className="text-sm text-pk-content-tertiary flex items-center">
+                            <Exclamation2 className="w-4 h-4 mr-2" />
+                            <span>
+                                {usedProviders
+                                    ? conjunctScmProviders(setupProvidersWithoutPathSearchSupport)
+                                    : "Some providers"}{" "}
+                                only support searching by repository name, not full paths.
+                            </span>
+                        </div>
+                    ),
+                    isSelectable: false,
+                });
+            }
+
+            if (!onlyConfigurations && searchString.length > 0 && usedProviders.includes("Azure DevOps")) {
+                // CLC-780
                 result.push({
                     id: "azure-devops",
                     element: (
@@ -332,22 +399,17 @@ export default function RepositoryFinder({
                 });
             }
 
-            if (searchString.length < 3) {
-                // add an element that tells the user to type more
-                result.push({
-                    id: "not-searched",
-                    element: (
-                        <div className="text-sm text-pk-content-tertiary">
-                            Please type at least 3 characters to search.
-                        </div>
-                    ),
-                    isSelectable: false,
-                });
-            }
-
             return result;
         },
-        [repos, hasMore, authProviders.data, onlyConfigurations, isShowingExamples],
+        [
+            isShowingExamples,
+            onlyConfigurations,
+            repos,
+            hasMore,
+            authProviders.data,
+            filteredPredefinedRepos,
+            usedProviders,
+        ],
     );
 
     return (

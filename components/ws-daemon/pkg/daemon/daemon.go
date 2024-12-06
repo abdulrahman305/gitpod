@@ -208,13 +208,18 @@ func NewDaemon(config Config) (*Daemon, error) {
 		config.CPULimit.CGroupBasePath,
 	)
 
-	workspaceOps, err := controller.NewWorkspaceOperations(contentCfg, controller.NewWorkspaceProvider(contentCfg.WorkingArea, hooks), wrappedReg)
+	dsptch, err := dispatch.NewDispatch(containerRuntime, clientset, config.Runtime.KubernetesNamespace, nodename, listener...)
+	if err != nil {
+		return nil, err
+	}
+
+	workspaceOps, err := controller.NewWorkspaceOperations(contentCfg, controller.NewWorkspaceProvider(contentCfg.WorkingArea, hooks), wrappedReg, dsptch)
 	if err != nil {
 		return nil, err
 	}
 
 	wsctrl, err := controller.NewWorkspaceController(
-		mgr.GetClient(), mgr.GetEventRecorderFor("workspace"), nodename, config.Runtime.SecretsNamespace, config.WorkspaceController.MaxConcurrentReconciles, workspaceOps, wrappedReg)
+		mgr.GetClient(), mgr.GetEventRecorderFor("workspace"), nodename, config.Runtime.SecretsNamespace, config.WorkspaceController.MaxConcurrentReconciles, workspaceOps, wrappedReg, containerRuntime)
 	if err != nil {
 		return nil, err
 	}
@@ -232,11 +237,6 @@ func NewDaemon(config Config) (*Daemon, error) {
 
 	housekeeping := controller.NewHousekeeping(contentCfg.WorkingArea, 5*time.Minute)
 	go housekeeping.Start(context.Background())
-
-	dsptch, err := dispatch.NewDispatch(containerRuntime, clientset, config.Runtime.KubernetesNamespace, nodename, listener...)
-	if err != nil {
-		return nil, err
-	}
 
 	dsk := diskguard.FromConfig(config.DiskSpaceGuard, clientset, nodename)
 

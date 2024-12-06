@@ -12,6 +12,7 @@ import { RepoURL } from "../repohost/repo-url";
 import { RepositoryProvider } from "../repohost/repository-provider";
 import { BitbucketApiFactory } from "./bitbucket-api-factory";
 import asyncBatch from "async-batch";
+import { handleBitbucketError } from "../bitbucket-server/utils";
 
 @injectable()
 export class BitbucketRepositoryProvider implements RepositoryProvider {
@@ -123,15 +124,15 @@ export class BitbucketRepositoryProvider implements RepositoryProvider {
 
     async hasReadAccess(user: User, owner: string, repo: string): Promise<boolean> {
         const api = await this.apiFactory.create(user);
-        try {
-            await api.repositories.get({ workspace: owner, repo_slug: repo });
-            // we assume that if the current token is good to read the repository details,
-            // then the repository is accessible
-            return true;
-        } catch (err) {
-            console.warn({ userId: user.id }, "hasReadAccess error", err, { owner, repo });
-            return false;
-        }
+        const result = await api.repositories.get({ workspace: owner, repo_slug: repo }).catch((e) => {
+            const error = e instanceof Error ? handleBitbucketError(e) : e;
+            console.warn({ userId: user.id }, "hasReadAccess error", error, { owner, repo });
+            return null;
+        });
+
+        // we assume that if the current token is good to read the repository details,
+        // then the repository is accessible
+        return result !== null;
     }
 
     public async getCommitHistory(
@@ -143,7 +144,7 @@ export class BitbucketRepositoryProvider implements RepositoryProvider {
     ): Promise<string[]> {
         const api = await this.apiFactory.create(user);
         // TODO(janx): To get more results than Bitbucket API's max pagelen (seems to be 100), pagination should be handled.
-        // The additional property 'page' may be helfpul.
+        // The additional property 'page' may be helpful.
         const result = await api.repositories.listCommitsAt({
             workspace: owner,
             repo_slug: repo,
@@ -187,7 +188,7 @@ export class BitbucketRepositoryProvider implements RepositoryProvider {
                     workspace: workspaceSlug,
                     // name includes searchString
                     q: `name ~ "${searchString}"`,
-                    // sort by most recently updatd first
+                    // sort by most recently updated first
                     sort: "-updated_on",
                     // limit to the first 10 results per workspace
                     pagelen: 10,

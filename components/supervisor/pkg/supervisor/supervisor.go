@@ -42,6 +42,7 @@ import (
 	"github.com/prometheus/common/route"
 	"github.com/soheilhy/cmux"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/sys/unix"
 	"golang.org/x/xerrors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -356,6 +357,9 @@ func Run(options ...RunOption) {
 		Uid: gitpodUID,
 		Gid: gitpodGID,
 	}
+	if !cfg.isHeadless() {
+		termMuxSrv.DefaultAmbientCaps = grantCapSysPtrace(termMuxSrv.DefaultAmbientCaps)
+	}
 
 	taskManager := newTasksManager(cfg, termMuxSrv, cstate, nil, ideReady, desktopIdeReady)
 
@@ -389,7 +393,7 @@ func Run(options ...RunOption) {
 		RegistrableTokenService{Service: tokenService},
 		notificationService,
 		NewInfoService(cfg, cstate, gitpodService),
-		&ControlService{portsManager: portMgmt},
+		&ControlService{portsManager: portMgmt, gitpodService: gitpodService},
 		&portService{portsManager: portMgmt},
 		&taskService{
 			wg:              taskServiceWg,
@@ -465,7 +469,7 @@ func Run(options ...RunOption) {
 
 	if cfg.isHeadless() {
 		wg.Add(1)
-		go stopWhenTasksAreDone(ctx, &wg, shutdown, tasksSuccessChan)
+		go stopWhenTasksAreDone(&wg, cfg, shutdown, tasksSuccessChan)
 	} else if !opts.RunGP {
 		wg.Add(1)
 		go portMgmt.Run(ctx, &wg)
@@ -1007,7 +1011,7 @@ func launchIDE(cfg *Config, ideConfig *IDEConfig, cmd *exec.Cmd, ideStopped chan
 
 			ideWasReady, _ := ideReady.Get()
 			if !ideWasReady {
-				log.WithField("ide", ide.String()).WithError(err).Fatal("IDE failed to start")
+				log.WithField("ide", ide.String()).WithError(err).Fatal("IDE failed before becoming ready")
 				return
 			}
 		}
@@ -1035,6 +1039,8 @@ func prepareIDELaunch(cfg *Config, ideConfig *IDEConfig) *exec.Cmd {
 	// IDE and its children.
 	cmd.SysProcAttr.Setpgid = true
 	cmd.SysProcAttr.Pdeathsig = syscall.SIGKILL
+
+	cmd.SysProcAttr.AmbientCaps = grantCapSysPtrace(cmd.SysProcAttr.AmbientCaps)
 
 	// Here we must resist the temptation to "neaten up" the IDE output for headless builds.
 	// This would break the JSON parsing of the headless builds.
@@ -1593,15 +1599,27 @@ func tunnelOverSSH(ctx context.Context, tunneled *ports.TunneledPortsService, ne
 	<-ctx.Done()
 }
 
-func stopWhenTasksAreDone(ctx context.Context, wg *sync.WaitGroup, shutdown chan ShutdownReason, successChan <-chan taskSuccess) {
+func stopWhenTasksAreDone(wg *sync.WaitGroup, cfg *Config, shutdown chan ShutdownReason, successChan <-chan taskSuccess) {
 	defer wg.Done()
 	defer close(shutdown)
 
 	success := <-successChan
 	if success.Failed() {
+		var msg string
+		if cfg.isImageBuild() {
+			logFromFile, err := os.ReadFile("/workspace/.gitpod/bob.log")
+			debugMsg := "Debug this using `gp validate` (visit https://www.gitpod.io/docs/configure/workspaces#validate-your-gitpod-configuration) to learn more"
+			if err != nil {
+				log.WithError(err).Error("err while reading bob.log")
+				msg = fmt.Sprintf("image build failed: %s. %s", string(success), debugMsg)
+			} else {
+				msg = fmt.Sprintf("image build failed: %s. %s", string(logFromFile), debugMsg)
+			}
+		} else {
+			msg = fmt.Sprintf("headless task failed: %s", string(success))
+		}
 		// we signal task failure via kubernetes termination log
-		msg := []byte("headless task failed: " + string(success))
-		err := ioutil.WriteFile("/dev/termination-log", msg, 0o644)
+		err := os.WriteFile("/dev/termination-log", []byte(msg), 0o644)
 		if err != nil {
 			log.WithError(err).Error("err while writing termination log")
 		}
@@ -1965,4 +1983,10 @@ func waitForIde(parent context.Context, ideReady *ideReadyState, desktopIdeReady
 	case <-desktopIdeReady.Wait():
 	}
 	return true, ""
+}
+
+// We grant ptrace for IDE, terminal, ssh and their child process
+// It's make IDE attach more easier
+func grantCapSysPtrace(caps []uintptr) []uintptr {
+	return append(caps, unix.CAP_SYS_PTRACE)
 }

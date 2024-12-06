@@ -9,10 +9,17 @@ function replaceImage(image) {
     return image.replace("gitpod-dev-artifact", "gitpod-core-dev");
 }
 
+const imagesBuildFromMain = [
+    "jb-backend-plugin:commit-2d67254d5aa110bc2c76cd807b85b272e3d54d97-latest",
+    "jb-backend-plugin:commit-4c69ad0670cc4cfbf43910e1db700ad90acd5ac6",
+];
+
 // TODO(hw): remove me
 function replaceImage2(image) {
-    if (image.includes("jb-backend-plugin:commit-2d67254d5aa110bc2c76cd807b85b272e3d54d97-latest")) {
-        return image.replace("gitpod-dev-artifact", "gitpod-core-dev");
+    for (const imgFromMain of imagesBuildFromMain) {
+        if (image.includes(imgFromMain)) {
+            return image.replace("gitpod-dev-artifact", "gitpod-core-dev");
+        }
     }
     return image;
 }
