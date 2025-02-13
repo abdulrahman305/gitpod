@@ -30,7 +30,6 @@ const (
 )
 
 func deployment(ctx *common.RenderContext) ([]runtime.Object, error) {
-	//nolint:typecheck
 	configHash, err := common.ObjectHash(configmap(ctx))
 	if err != nil {
 		return nil, err
@@ -50,6 +49,7 @@ func deployment(ctx *common.RenderContext) ([]runtime.Object, error) {
 			},
 		},
 		databaseSecretVolume,
+		common.CAVolume(),
 	}
 	volumeMounts := []corev1.VolumeMount{
 		{
@@ -59,6 +59,7 @@ func deployment(ctx *common.RenderContext) ([]runtime.Object, error) {
 			SubPath:   configJSONFilename,
 		},
 		databaseSecretMount,
+		common.CAVolumeMount(),
 	}
 
 	_ = ctx.WithExperimental(func(cfg *experimental.Config) error {

@@ -1,4 +1,4 @@
-// Copyright (c) 2024 Gitpod GmbH. All rights reserved.
+// Copyright (c) 2025 Gitpod GmbH. All rights reserved.
 // Licensed under the GNU Affero General Public License (AGPL).
 // See License.AGPL.txt in the project root for license information.
 
@@ -56,4 +56,12 @@ public interface InstallationServiceClientInterface {
    */
   public suspend fun getOnboardingState(request: Installation.GetOnboardingStateRequest,
       headers: Headers = emptyMap()): ResponseMessage<Installation.GetOnboardingStateResponse>
+
+  /**
+   *  GetInstallationConfiguration returns configuration of the installation.
+   */
+  public suspend
+      fun getInstallationConfiguration(request: Installation.GetInstallationConfigurationRequest,
+      headers: Headers = emptyMap()):
+      ResponseMessage<Installation.GetInstallationConfigurationResponse>
 }

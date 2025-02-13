@@ -55,7 +55,7 @@ import { SpiceDBClientProvider, spiceDBConfigFromEnv } from "./authorization/spi
 import { createSpiceDBAuthorizer } from "./authorization/spicedb-authorizer";
 import { BillingModes } from "./billing/billing-mode";
 import { EntitlementService, EntitlementServiceImpl } from "./billing/entitlement-service";
-import { EntitlementServiceUBP } from "./billing/entitlement-service-ubp";
+import { EntitlementServiceUBP, LazyOrganizationService } from "./billing/entitlement-service-ubp";
 import { StripeService } from "./billing/stripe-service";
 import { CodeSyncService } from "./code-sync/code-sync-service";
 import { Config, ConfigFile } from "./config";
@@ -277,6 +277,11 @@ export const productionContainerModule = new ContainerModule(
         bind(HeadlessLogController).toSelf().inSingletonScope();
 
         bind(OrganizationService).toSelf().inSingletonScope();
+        bind(LazyOrganizationService).toFactory((ctx) => {
+            return () => {
+                return ctx.container.get<OrganizationService>(OrganizationService);
+            };
+        });
         bind(ProjectsService).toSelf().inSingletonScope();
         bind(ScmService).toSelf().inSingletonScope();
 
@@ -407,9 +412,9 @@ export const productionContainerModule = new ContainerModule(
         bind<DefaultWorkspaceImageValidator>(DefaultWorkspaceImageValidator)
             .toDynamicValue((ctx) =>
                 // lazy load to avoid circular dependency
-                async (userId: string, imageRef: string) => {
+                async (userId: string, imageRef: string, organizationId?: string) => {
                     const user = await ctx.container.get(UserService).findUserById(userId, userId);
-                    await ctx.container.get(WorkspaceService).validateImageRef({}, user, imageRef);
+                    await ctx.container.get(WorkspaceService).validateImageRef({}, user, imageRef, organizationId);
                 },
             )
             .inSingletonScope();

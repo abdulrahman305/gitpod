@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2024 Gitpod GmbH. All rights reserved.
+ * Copyright (c) 2025 Gitpod GmbH. All rights reserved.
  * Licensed under the GNU Affero General Public License (AGPL).
  * See License.AGPL.txt in the project root for license information.
  */
@@ -9,7 +9,7 @@
 /* eslint-disable */
 // @ts-nocheck
 
-import { CreateBlockedEmailDomainRequest, CreateBlockedEmailDomainResponse, CreateBlockedRepositoryRequest, CreateBlockedRepositoryResponse, DeleteBlockedRepositoryRequest, DeleteBlockedRepositoryResponse, GetInstallationWorkspaceDefaultImageRequest, GetInstallationWorkspaceDefaultImageResponse, GetOnboardingStateRequest, GetOnboardingStateResponse, ListBlockedEmailDomainsRequest, ListBlockedEmailDomainsResponse, ListBlockedRepositoriesRequest, ListBlockedRepositoriesResponse } from "./installation_pb.js";
+import { CreateBlockedEmailDomainRequest, CreateBlockedEmailDomainResponse, CreateBlockedRepositoryRequest, CreateBlockedRepositoryResponse, DeleteBlockedRepositoryRequest, DeleteBlockedRepositoryResponse, GetInstallationConfigurationRequest, GetInstallationConfigurationResponse, GetInstallationWorkspaceDefaultImageRequest, GetInstallationWorkspaceDefaultImageResponse, GetOnboardingStateRequest, GetOnboardingStateResponse, ListBlockedEmailDomainsRequest, ListBlockedEmailDomainsResponse, ListBlockedRepositoriesRequest, ListBlockedRepositoriesResponse } from "./installation_pb.js";
 import { MethodKind } from "@bufbuild/protobuf";
 
 /**
@@ -94,6 +94,17 @@ export const InstallationService = {
       name: "GetOnboardingState",
       I: GetOnboardingStateRequest,
       O: GetOnboardingStateResponse,
+      kind: MethodKind.Unary,
+    },
+    /**
+     * GetInstallationConfiguration returns configuration of the installation.
+     *
+     * @generated from rpc gitpod.v1.InstallationService.GetInstallationConfiguration
+     */
+    getInstallationConfiguration: {
+      name: "GetInstallationConfiguration",
+      I: GetInstallationConfigurationRequest,
+      O: GetInstallationConfigurationResponse,
       kind: MethodKind.Unary,
     },
   }

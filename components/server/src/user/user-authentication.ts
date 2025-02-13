@@ -6,7 +6,7 @@
 
 import { injectable, inject } from "inversify";
 import { User, Identity, Token, IdentityLookup } from "@gitpod/gitpod-protocol";
-import { EmailDomainFilterDB, MaybeUser, UserDB } from "@gitpod/gitpod-db/lib";
+import { BUILTIN_INSTLLATION_ADMIN_USER_ID, EmailDomainFilterDB, MaybeUser, UserDB } from "@gitpod/gitpod-db/lib";
 import { HostContextProvider } from "../auth/host-context-provider";
 import { log } from "@gitpod/gitpod-protocol/lib/util/logging";
 import { Config } from "../config";
@@ -16,6 +16,8 @@ import { EmailAddressAlreadyTakenException, SelectAccountException } from "../au
 import { SelectAccountPayload } from "@gitpod/gitpod-protocol/lib/auth";
 import { UserService } from "./user-service";
 import { Authorizer } from "../authorization/authorizer";
+import { getExperimentsClientForBackend } from "@gitpod/gitpod-protocol/lib/experiments/configcat-server";
+import { isOrganizationOwned, isAllowedToCreateOrganization } from "@gitpod/public-api-common/lib/user-utils";
 
 export interface CreateUserParams {
     organizationId?: string;
@@ -193,12 +195,29 @@ export class UserAuthentication {
     }
 
     /**
-     * Only installation-level users are allowed to create/join other orgs then the one they belong to
+     * Only installation-level users are allowed to join other orgs then the one they belong to
      * @param user
      * @returns
      */
-    async mayCreateOrJoinOrganization(user: User): Promise<boolean> {
-        return !user.organizationId;
+    async mayJoinOrganization(user: User): Promise<boolean> {
+        return !isOrganizationOwned(user);
+    }
+
+    /**
+     * gitpod.io: Only installation-level users are allowed to create orgs
+     * Dedicated: Only if multiOrg is enabled, installation-level users (=admin-user) can create orgs
+     * @param user
+     * @returns
+     */
+    async mayCreateOrganization(user: User): Promise<boolean> {
+        const isDedicated = this.config.isDedicatedInstallation;
+        const isMultiOrgEnabled = await getExperimentsClientForBackend().getValueAsync("enable_multi_org", false, {
+            gitpodHost: this.config.hostUrl.url.host,
+        });
+        return (
+            isAllowedToCreateOrganization(user, isDedicated, isMultiOrgEnabled) ||
+            (isDedicated && user.id === BUILTIN_INSTLLATION_ADMIN_USER_ID)
+        );
     }
 
     async isBlocked(params: CheckIsBlockedParams): Promise<boolean> {

@@ -45,14 +45,23 @@ import { PaginationResponse } from "@gitpod/public-api/lib/gitpod/v1/pagination_
 import { validate as uuidValidate } from "uuid";
 import { ctxUserId } from "../util/request-context";
 import { ApplicationError, ErrorCodes } from "@gitpod/gitpod-protocol/lib/messaging/error";
+import { EntitlementService } from "../billing/entitlement-service";
+import { Config } from "../config";
+import { ProjectsService } from "../projects/projects-service";
 
 @injectable()
 export class OrganizationServiceAPI implements ServiceImpl<typeof OrganizationServiceInterface> {
     constructor(
+        @inject(Config)
+        private readonly config: Config,
         @inject(OrganizationService)
         private readonly orgService: OrganizationService,
         @inject(PublicAPIConverter)
         private readonly apiConverter: PublicAPIConverter,
+        @inject(EntitlementService)
+        private readonly entitlementService: EntitlementService,
+        @inject(ProjectsService)
+        private readonly projectService: ProjectsService,
     ) {}
 
     async listOrganizationWorkspaceClasses(
@@ -308,6 +317,63 @@ export class OrganizationServiceAPI implements ServiceImpl<typeof OrganizationSe
                 );
                 update.roleRestrictions[role] = permissions;
             }
+        }
+
+        if (typeof req.maxParallelRunningWorkspaces === "number") {
+            if (req.maxParallelRunningWorkspaces < 0) {
+                throw new ApplicationError(ErrorCodes.BAD_REQUEST, "maxParallelRunningWorkspaces must be >= 0");
+            }
+            const maxAllowance = await this.entitlementService.getMaxParallelWorkspaces(
+                ctxUserId(),
+                req.organizationId,
+            );
+            if (maxAllowance && req.maxParallelRunningWorkspaces > maxAllowance) {
+                throw new ApplicationError(
+                    ErrorCodes.BAD_REQUEST,
+                    `maxParallelRunningWorkspaces must be <= ${maxAllowance}`,
+                );
+            }
+            if (!Number.isInteger(req.maxParallelRunningWorkspaces)) {
+                throw new ApplicationError(ErrorCodes.BAD_REQUEST, "maxParallelRunningWorkspaces must be an integer");
+            }
+
+            update.maxParallelRunningWorkspaces = req.maxParallelRunningWorkspaces;
+        }
+
+        if (req.onboardingSettings && Object.keys(req.onboardingSettings).length > 0) {
+            if (!this.config.isDedicatedInstallation) {
+                throw new ApplicationError(
+                    ErrorCodes.BAD_REQUEST,
+                    "onboardingSettings can only be set on enterprise installations",
+                );
+            }
+            if ((req.onboardingSettings.internalLink?.length ?? 0) > 255) {
+                throw new ApplicationError(ErrorCodes.BAD_REQUEST, "internalLink must be <= 255 characters");
+            }
+
+            if (req.onboardingSettings.recommendedRepositories) {
+                if (req.onboardingSettings.recommendedRepositories.length > 3) {
+                    throw new ApplicationError(
+                        ErrorCodes.BAD_REQUEST,
+                        "there can't be more than 3 recommendedRepositories",
+                    );
+                }
+                for (const configurationId of req.onboardingSettings.recommendedRepositories) {
+                    if (!uuidValidate(configurationId)) {
+                        throw new ApplicationError(ErrorCodes.BAD_REQUEST, "recommendedRepositories must be UUIDs");
+                    }
+
+                    const project = await this.projectService.getProject(ctxUserId(), configurationId);
+                    if (!project) {
+                        throw new ApplicationError(ErrorCodes.BAD_REQUEST, `repository ${configurationId} not found`);
+                    }
+                }
+            }
+
+            update.onboardingSettings = req.onboardingSettings;
+        }
+        if (req.annotateGitCommits !== undefined) {
+            update.annotateGitCommits = req.annotateGitCommits;
         }
 
         if (Object.keys(update).length === 0) {

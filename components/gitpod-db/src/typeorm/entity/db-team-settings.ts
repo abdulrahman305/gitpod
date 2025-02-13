@@ -4,7 +4,13 @@
  * See License.AGPL.txt in the project root for license information.
  */
 
-import { OrgMemberRole, OrganizationSettings, RoleRestrictions, TimeoutSettings } from "@gitpod/gitpod-protocol";
+import {
+    OnboardingSettings,
+    OrgMemberRole,
+    OrganizationSettings,
+    RoleRestrictions,
+    TimeoutSettings,
+} from "@gitpod/gitpod-protocol";
 import { Entity, Column, PrimaryColumn } from "typeorm";
 import { TypeORM } from "../typeorm";
 
@@ -38,6 +44,15 @@ export class DBOrgSettings implements OrganizationSettings {
 
     @Column("json", { nullable: true })
     roleRestrictions?: RoleRestrictions | undefined;
+
+    @Column({ type: "int", default: 0 })
+    maxParallelRunningWorkspaces: number;
+
+    @Column("json", { nullable: true })
+    onboardingSettings?: OnboardingSettings | undefined;
+
+    @Column({ type: "boolean", default: false })
+    annotateGitCommits?: boolean | undefined;
 
     @Column()
     deleted: boolean;

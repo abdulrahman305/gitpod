@@ -1,4 +1,4 @@
-// Copyright (c) 2024 Gitpod GmbH. All rights reserved.
+// Copyright (c) 2025 Gitpod GmbH. All rights reserved.
 // Licensed under the GNU Affero General Public License (AGPL).
 // See License.AGPL.txt in the project root for license information.
 
@@ -81,6 +81,16 @@ func (s *ProxyInstallationServiceHandler) CreateBlockedEmailDomain(ctx context.C
 
 func (s *ProxyInstallationServiceHandler) GetOnboardingState(ctx context.Context, req *connect_go.Request[v1.GetOnboardingStateRequest]) (*connect_go.Response[v1.GetOnboardingStateResponse], error) {
 	resp, err := s.Client.GetOnboardingState(ctx, req.Msg)
+	if err != nil {
+		// TODO(milan): Convert to correct status code
+		return nil, err
+	}
+
+	return connect_go.NewResponse(resp), nil
+}
+
+func (s *ProxyInstallationServiceHandler) GetInstallationConfiguration(ctx context.Context, req *connect_go.Request[v1.GetInstallationConfigurationRequest]) (*connect_go.Response[v1.GetInstallationConfigurationResponse], error) {
+	resp, err := s.Client.GetInstallationConfiguration(ctx, req.Msg)
 	if err != nil {
 		// TODO(milan): Convert to correct status code
 		return nil, err

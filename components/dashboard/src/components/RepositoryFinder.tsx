@@ -8,7 +8,6 @@ import { FC, useCallback, useEffect, useMemo, useState } from "react";
 import { Combobox, ComboboxElement, ComboboxSelectedItem } from "./podkit/combobox/Combobox";
 import RepositorySVG from "../icons/Repository.svg";
 import { ReactComponent as RepositoryIcon } from "../icons/RepositoryWithColor.svg";
-import { ReactComponent as GitpodRepositoryTemplate } from "../icons/GitpodRepositoryTemplate.svg";
 import GitpodRepositoryTemplateSVG from "../icons/GitpodRepositoryTemplate.svg";
 import { MiddleDot } from "./typography/MiddleDot";
 import {
@@ -20,13 +19,19 @@ import { useAuthProviderDescriptions } from "../data/auth-providers/auth-provide
 import { ReactComponent as Exclamation2 } from "../images/exclamation2.svg";
 import { AuthProviderType } from "@gitpod/public-api/lib/gitpod/v1/authprovider_pb";
 import { SuggestedRepository } from "@gitpod/public-api/lib/gitpod/v1/scm_pb";
-import { PREDEFINED_REPOS } from "../data/git-providers/predefined-repos";
+import { PREDEFINED_REPOS, PredefinedRepo } from "../data/git-providers/predefined-repos";
 import { useConfiguration, useListConfigurations } from "../data/configurations/configuration-queries";
 import { useUserLoader } from "../hooks/use-user-loader";
 import { conjunctScmProviders, getDeduplicatedScmProviders } from "../utils";
+import { cn } from "@podkit/lib/cn";
+import { useOrgSuggestedRepos } from "../data/organizations/suggested-repositories-query";
+import { toRemoteURL } from "../projects/render-utils";
 
-const isPredefined = (repo: SuggestedRepository): boolean => {
-    return PREDEFINED_REPOS.some((predefined) => predefined.url === repo.url) && !repo.configurationId;
+const isPredefined = (repo: SuggestedRepository | PredefinedRepo): boolean => {
+    return (
+        PREDEFINED_REPOS.some((predefined) => predefined.url === repo.url) &&
+        !(repo as SuggestedRepository).configurationId
+    );
 };
 
 const resolveIcon = (contextUrl?: string): string => {
@@ -34,7 +39,37 @@ const resolveIcon = (contextUrl?: string): string => {
     return PREDEFINED_REPOS.some((repo) => repo.url === contextUrl) ? GitpodRepositoryTemplateSVG : RepositorySVG;
 };
 
-interface RepositoryFinderProps {
+type PredefinedRepositoryOptionProps = {
+    repo: PredefinedRepo;
+};
+const PredefinedRepositoryOption: FC<PredefinedRepositoryOptionProps> = ({ repo }) => {
+    const prettyUrl = toRemoteURL(repo.url);
+    const icon = resolveIcon(repo.url);
+
+    return (
+        <div className="flex flex-col overflow-hidden" aria-label={`Demo: ${repo.url}`}>
+            <div className="flex items-center">
+                {repo.configurationId ? (
+                    <RepositoryIcon className={cn("w-5 mr-2 text-kumquat-ripe")} />
+                ) : (
+                    <img className={cn("w-5 mr-2 text-pk-content-secondary")} src={icon} alt="" />
+                )}
+
+                <span className="text-sm font-semibold">{repo.repoName}</span>
+                <MiddleDot className="px-0.5 text-pk-content-secondary" />
+                <span
+                    className="text-sm whitespace-nowrap truncate overflow-ellipsis text-pk-content-secondary"
+                    title={prettyUrl}
+                >
+                    {prettyUrl}
+                </span>
+            </div>
+            <span className="text-xs text-pk-content-secondary ml-7">{repo.description}</span>
+        </div>
+    );
+};
+
+type RepositoryFinderProps = {
     selectedContextURL?: string;
     selectedConfigurationId?: string;
     disabled?: boolean;
@@ -43,8 +78,7 @@ interface RepositoryFinderProps {
     onlyConfigurations?: boolean;
     showExamples?: boolean;
     onChange?: (repo: SuggestedRepository) => void;
-}
-
+};
 export default function RepositoryFinder({
     selectedContextURL,
     selectedConfigurationId,
@@ -68,6 +102,8 @@ export default function RepositoryFinder({
         excludeConfigurations,
         onlyConfigurations,
     });
+
+    const { data: orgSuggestedRepos } = useOrgSuggestedRepos();
 
     // We search for the current context URL in order to have data for the selected suggestion
     const selectedItemSearch = useListConfigurations({
@@ -161,29 +197,6 @@ export default function RepositoryFinder({
     const [hasStartedSearching, setHasStartedSearching] = useState(false);
     const [isShowingExamples, setIsShowingExamples] = useState(showExamples);
 
-    type PredefinedRepositoryOptionProps = {
-        repo: typeof PREDEFINED_REPOS[number];
-    };
-
-    const PredefinedRepositoryOption: FC<PredefinedRepositoryOptionProps> = ({ repo }) => {
-        return (
-            <div className="flex flex-col overflow-hidden" aria-label={`Demo: ${repo.url}`}>
-                <div className="flex items-center">
-                    <GitpodRepositoryTemplate className="w-5 h-5 text-pk-content-tertiary mr-2" />
-                    <span className="text-sm font-semibold">{repo.repoName}</span>
-                    <MiddleDot className="px-0.5 text-pk-content-tertiary" />
-                    <span
-                        className="text-sm whitespace-nowrap truncate overflow-ellipsis text-pk-content-secondary"
-                        title={repo.repoPath}
-                    >
-                        {repo.repoPath}
-                    </span>
-                </div>
-                <span className="text-xs text-pk-content-secondary ml-7">{repo.description}</span>
-            </div>
-        );
-    };
-
     // Resolve the selected context url & configurationId id props to a suggestion entry
     useEffect(() => {
         let match = repos?.find((repo) => {
@@ -266,13 +279,22 @@ export default function RepositoryFinder({
     };
 
     const filteredPredefinedRepos = useMemo(() => {
+        if (orgSuggestedRepos?.length) {
+            return orgSuggestedRepos.map((repo) => ({
+                url: repo.url,
+                repoName: repo.repoName,
+                description: "",
+                configurationId: repo.configurationId,
+            }));
+        }
+
         return PREDEFINED_REPOS.filter((repo) => {
             const url = new URL(repo.url);
             const isMatchingAuthProviderAvailable =
                 authProviders.data?.some((provider) => provider.host === url.host) ?? false;
             return isMatchingAuthProviderAvailable;
         });
-    }, [authProviders.data]);
+    }, [authProviders.data, orgSuggestedRepos]);
 
     const getElements = useCallback(
         (searchString: string): ComboboxElement[] => {
@@ -300,11 +322,14 @@ export default function RepositoryFinder({
                         repo.url.toLowerCase().includes(searchString.toLowerCase()) ||
                         repo.repoName.toLowerCase().includes(searchString.toLowerCase())
                     ) {
-                        result.push({
-                            id: repo.url,
-                            element: <PredefinedRepositoryOption repo={repo} />,
-                            isSelectable: true,
-                        });
+                        const alreadyPresent = result.find((r) => r.id === repo.configurationId);
+                        if (!alreadyPresent) {
+                            result.push({
+                                id: repo.url,
+                                element: <PredefinedRepositoryOption repo={repo} />,
+                                isSelectable: true,
+                            });
+                        }
                     }
                 });
             }
@@ -313,7 +338,7 @@ export default function RepositoryFinder({
                 result.push({
                     id: "more",
                     element: (
-                        <div className="text-sm text-pk-content-tertiary">Repo missing? Try refining your search.</div>
+                        <div className="text-sm text-pk-content-secondary">Repo missing? Try refining your search.</div>
                     ),
                     isSelectable: false,
                 });
@@ -328,7 +353,7 @@ export default function RepositoryFinder({
                 result.push({
                     id: "bitbucket-server",
                     element: (
-                        <div className="text-sm text-pk-content-tertiary flex items-center">
+                        <div className="text-sm text-pk-content-secondary flex items-center">
                             <Exclamation2 className="w-4 h-4 mr-2" />
                             <span>Bitbucket Server only supports searching by prefix.</span>
                         </div>
@@ -347,7 +372,7 @@ export default function RepositoryFinder({
                 result.push({
                     id: "gitlab",
                     element: (
-                        <div className="text-sm text-pk-content-tertiary flex items-center">
+                        <div className="text-sm text-pk-content-secondary flex items-center">
                             <Exclamation2 className="w-4 h-4 mr-2" />
                             <span>
                                 Search text is &lt; 3 characters. GitLab will only show exact matches for short
@@ -371,7 +396,7 @@ export default function RepositoryFinder({
                 result.push({
                     id: "whole-path-matching-unsupported",
                     element: (
-                        <div className="text-sm text-pk-content-tertiary flex items-center">
+                        <div className="text-sm text-pk-content-secondary flex items-center">
                             <Exclamation2 className="w-4 h-4 mr-2" />
                             <span>
                                 {usedProviders
@@ -390,7 +415,7 @@ export default function RepositoryFinder({
                 result.push({
                     id: "azure-devops",
                     element: (
-                        <div className="text-sm text-pk-content-tertiary flex items-center">
+                        <div className="text-sm text-pk-content-secondary flex items-center">
                             <Exclamation2 className="w-4 h-4 mr-2" />
                             <span>Azure DevOps doesn't support repository searching.</span>
                         </div>
@@ -453,18 +478,20 @@ const SuggestedRepositoryOption: FC<SuggestedRepositoryOptionProps> = ({ repo })
             aria-label={`${repo.configurationId ? "Project" : "Repo"}: ${repo.url}`}
         >
             <span className={"pr-2"}>
-                <RepositoryIcon className={`w-5 h-5 text-pk-content-tertiary`} />
+                <RepositoryIcon className={`w-5 h-5 text-pk-content-secondary`} />
             </span>
 
             {name && (
                 <>
                     <span className="text-sm whitespace-nowrap font-semibold">{name}</span>
-                    <MiddleDot className="px-0.5 text-pk-content-tertiary" />
+                    <MiddleDot className="px-0.5 text-pk-content-secondary" />
                 </>
             )}
 
             <span
-                className="text-sm whitespace-nowrap truncate overflow-ellipsis text-pk-content-secondary"
+                className={cn("text-sm whitespace-nowrap truncate overflow-ellipsis", {
+                    "text-pk-content-secondary": !!name,
+                })}
                 title={repoPath}
             >
                 {repoPath}

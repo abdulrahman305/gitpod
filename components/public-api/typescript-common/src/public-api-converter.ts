@@ -39,6 +39,10 @@ import {
     WorkspaceContext,
     WorkspaceInfo,
     WorkspaceSession as WorkspaceSessionProtocol,
+    Configuration as GitpodServerInstallationConfiguration,
+    NavigatorContext,
+    RefType,
+    OrgEnvVar,
 } from "@gitpod/gitpod-protocol/lib/protocol";
 import { AuditLog as AuditLogProtocol } from "@gitpod/gitpod-protocol/lib/audit-log";
 import {
@@ -85,6 +89,7 @@ import {
     ConfigurationEnvironmentVariable,
     EnvironmentVariable,
     EnvironmentVariableAdmission,
+    OrganizationEnvironmentVariable,
     UserEnvironmentVariable,
 } from "@gitpod/public-api/lib/gitpod/v1/envvar_pb";
 import {
@@ -104,6 +109,7 @@ import {
 import {
     BlockedEmailDomain,
     BlockedRepository,
+    InstallationConfiguration,
     OnboardingState,
 } from "@gitpod/public-api/lib/gitpod/v1/installation_pb";
 import {
@@ -155,6 +161,7 @@ import {
     WorkspacePort,
     WorkspacePort_Protocol,
     WorkspaceSession,
+    WorkspaceSession_Metrics,
     WorkspaceSnapshot,
     WorkspaceSpec,
     WorkspaceSpec_GitSpec,
@@ -162,6 +169,10 @@ import {
     WorkspaceStatus,
     WorkspaceStatus_PrebuildResult,
     WorkspaceStatus_WorkspaceConditions,
+    WorkspaceSession_Owner,
+    WorkspaceSession_WorkspaceContext,
+    WorkspaceSession_WorkspaceContext_Repository,
+    WorkspaceSession_WorkspaceContext_RefType,
 } from "@gitpod/public-api/lib/gitpod/v1/workspace_pb";
 import { BigIntToJson } from "@gitpod/gitpod-protocol/lib/util/stringify";
 import { getPrebuildLogPath } from "./prebuild-utils";
@@ -178,7 +189,7 @@ export type PartialConfiguration = DeepPartial<Configuration> & Pick<Configurati
  * - methods converting from gRPC to JSON-RPC is called `from*`
  */
 export class PublicAPIConverter {
-    toWorkspaceSession(arg: WorkspaceSessionProtocol): WorkspaceSession {
+    toWorkspaceSession(arg: WorkspaceSessionProtocol, owner: WorkspaceSession_Owner): WorkspaceSession {
         const workspace = this.toWorkspace({
             workspace: arg.workspace,
             latestInstance: arg.instance,
@@ -198,6 +209,19 @@ export class PublicAPIConverter {
         if (arg.instance.stoppedTime) {
             result.stoppedTime = Timestamp.fromDate(new Date(arg.instance.stoppedTime));
         }
+
+        const { metrics } = arg.instance.status;
+        result.metrics = new WorkspaceSession_Metrics({
+            totalImageSize: metrics?.image?.totalSize ? BigInt(metrics.image.totalSize) : undefined,
+            workspaceImageSize: metrics?.image?.workspaceImageSize
+                ? BigInt(metrics.image.workspaceImageSize)
+                : undefined,
+        });
+
+        result.id = arg.instance.id;
+        result.owner = owner;
+        result.context = this.toWorkspaceSessionContext(arg.workspace.context);
+
         return result;
     }
 
@@ -436,6 +460,39 @@ export class PublicAPIConverter {
             }
         }
         return metadata;
+    }
+
+    toWorkspaceSessionContext(arg: WorkspaceContext): WorkspaceSession_WorkspaceContext {
+        const result = new WorkspaceSession_WorkspaceContext();
+        if (CommitContext.is(arg)) {
+            result.revision = arg.revision;
+            result.refType = this.toRefType(arg.refType);
+            if (NavigatorContext.is(arg)) {
+                result.path = arg.path;
+            }
+            result.repository = new WorkspaceSession_WorkspaceContext_Repository({
+                cloneUrl: arg.repository.cloneUrl,
+                host: arg.repository.host,
+                owner: arg.repository.owner,
+                name: arg.repository.name,
+            });
+        }
+        result.ref = arg.ref ?? "";
+
+        return result;
+    }
+
+    toRefType(refType: RefType | undefined): WorkspaceSession_WorkspaceContext_RefType {
+        switch (refType) {
+            case "branch":
+                return WorkspaceSession_WorkspaceContext_RefType.BRANCH;
+            case "tag":
+                return WorkspaceSession_WorkspaceContext_RefType.TAG;
+            case "revision":
+                return WorkspaceSession_WorkspaceContext_RefType.REVISION;
+            default:
+                return WorkspaceSession_WorkspaceContext_RefType.UNSPECIFIED;
+        }
     }
 
     toWorkspaceConditions(conditions: WorkspaceInstanceConditions | undefined): WorkspaceStatus_WorkspaceConditions {
@@ -779,6 +836,14 @@ export class PublicAPIConverter {
         return result;
     }
 
+    toOrganizationEnvironmentVariable(envVar: OrgEnvVar): OrganizationEnvironmentVariable {
+        const result = new OrganizationEnvironmentVariable();
+        result.id = envVar.id || "";
+        result.name = envVar.name;
+        result.organizationId = envVar.orgId;
+        return result;
+    }
+
     toAdmission(shareable: boolean | undefined): AdmissionLevel {
         if (shareable) {
             return AdmissionLevel.EVERYONE;
@@ -977,7 +1042,13 @@ export class PublicAPIConverter {
 
     fromWorkspaceSettings(settings?: DeepPartial<WorkspaceSettings>) {
         const result: Partial<
-            Pick<ProjectSettings, "workspaceClasses" | "restrictedWorkspaceClasses" | "restrictedEditorNames">
+            Pick<
+                ProjectSettings,
+                | "workspaceClasses"
+                | "restrictedWorkspaceClasses"
+                | "restrictedEditorNames"
+                | "enableDockerdAuthentication"
+            >
         > = {};
         if (settings?.workspaceClass) {
             result.workspaceClasses = {
@@ -991,6 +1062,9 @@ export class PublicAPIConverter {
 
         if (settings?.restrictedEditorNames) {
             result.restrictedEditorNames = settings.restrictedEditorNames.filter((e) => !!e) as string[];
+        }
+        if (settings?.enableDockerdAuthentication !== undefined) {
+            result.enableDockerdAuthentication = settings.enableDockerdAuthentication;
         }
         return result;
     }
@@ -1032,13 +1106,11 @@ export class PublicAPIConverter {
 
     fromPartialConfiguration(configuration: PartialConfiguration): PartialProject {
         const prebuilds = this.fromPartialPrebuildSettings(configuration.prebuildSettings);
-        const { workspaceClasses, restrictedWorkspaceClasses, restrictedEditorNames } = this.fromWorkspaceSettings(
-            configuration.workspaceSettings,
-        );
+        const settings = this.fromWorkspaceSettings(configuration.workspaceSettings);
 
         const result: PartialProject = {
             id: configuration.id,
-            settings: {},
+            settings,
         };
 
         if (configuration.name !== undefined) {
@@ -1047,15 +1119,6 @@ export class PublicAPIConverter {
 
         if (Object.keys(prebuilds).length > 0) {
             result.settings!.prebuilds = prebuilds;
-        }
-        if (workspaceClasses && Object.keys(workspaceClasses).length > 0) {
-            result.settings!.workspaceClasses = workspaceClasses;
-        }
-        if (restrictedWorkspaceClasses) {
-            result.settings!.restrictedWorkspaceClasses = restrictedWorkspaceClasses;
-        }
-        if (restrictedEditorNames) {
-            result.settings!.restrictedEditorNames = restrictedEditorNames;
         }
 
         return result;
@@ -1079,6 +1142,12 @@ export class PublicAPIConverter {
                 role: this.toOrgMemberRole(role as OrgMemberRole),
                 permissions: permissions.map((permission) => this.toOrganizationPermission(permission)),
             })),
+            maxParallelRunningWorkspaces: settings.maxParallelRunningWorkspaces ?? 0,
+            onboardingSettings: {
+                internalLink: settings?.onboardingSettings?.internalLink ?? undefined,
+                recommendedRepositories: settings?.onboardingSettings?.recommendedRepositories ?? [],
+            },
+            annotateGitCommits: settings.annotateGitCommits ?? false,
         });
     }
 
@@ -1153,6 +1222,9 @@ export class PublicAPIConverter {
         }
         if (projectSettings?.restrictedEditorNames) {
             result.restrictedEditorNames = projectSettings.restrictedEditorNames;
+        }
+        if (projectSettings?.enableDockerdAuthentication !== undefined) {
+            result.enableDockerdAuthentication = projectSettings.enableDockerdAuthentication;
         }
         return result;
     }
@@ -1665,6 +1737,13 @@ export class PublicAPIConverter {
     toOnboardingState(state: GitpodServer.OnboardingState): OnboardingState {
         return new OnboardingState({
             completed: state.isCompleted,
+            organizationCountTotal: state.organizationCountTotal,
+        });
+    }
+
+    toInstallationConfiguration(config: GitpodServerInstallationConfiguration): InstallationConfiguration {
+        return new InstallationConfiguration({
+            isDedicatedInstallation: config.isDedicatedInstallation,
         });
     }
 

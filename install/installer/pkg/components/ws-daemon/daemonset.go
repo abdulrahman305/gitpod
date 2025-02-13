@@ -23,7 +23,6 @@ func daemonset(ctx *common.RenderContext) ([]runtime.Object, error) {
 	cfg := ctx.Config
 	labels := common.CustomizeLabel(ctx, Component, common.TypeMetaDaemonset)
 
-	//nolint:typecheck
 	configHash, err := common.ObjectHash(configmap(ctx))
 	if err != nil {
 		return nil, err
@@ -232,7 +231,7 @@ func daemonset(ctx *common.RenderContext) ([]runtime.Object, error) {
 				)),
 				Resources: common.ResourceRequirements(ctx, Component, Component, corev1.ResourceRequirements{Requests: corev1.ResourceList{
 					"cpu":    resource.MustParse("500m"),
-					"memory": resource.MustParse("4Gi"),
+					"memory": resource.MustParse("2Gi"),
 				}}),
 				VolumeMounts:    volumeMounts,
 				ImagePullPolicy: corev1.PullIfNotPresent,

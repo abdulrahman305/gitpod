@@ -22,6 +22,9 @@
             "path": "components/gitpod-cli"
         },
         {
+            "path": "components/dashboard"
+        },
+        {
             "path": "components/gitpod-protocol"
         },
         {
@@ -157,6 +160,7 @@
             "**/.git": true
         },
         "go.lintTool": "golangci-lint",
+        "go.lintFlags": ["-disable", "govet,errcheck,staticcheck", "--allow-parallel-runners", "--timeout", "15m"],
         "gopls": {
             "allowModfileModifications": true
         },

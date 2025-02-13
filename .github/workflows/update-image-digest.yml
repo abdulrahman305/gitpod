@@ -65,8 +65,9 @@ jobs:
 
           # update for chainguard redis
           redisImageDigest=$(crane digest cgr.dev/chainguard/redis:latest)
-          redisExporterDigest=$(crane digest cgr.dev/chainguard/prometheus-redis-exporter:latest)
-
+          # we switch to the quay.io image for the redis exporter, because cgr.dev/chainguard/prometheus-redis-exporter is not public anymore.
+          # see detail in https://linear.app/gitpod/issue/CLC-1039/#comment-c90cb270
+          redisExporterDigest=$(crane digest quay.io/oliver006/redis_exporter:latest)
 
           sed -i -e "s/^\(\s*ImageDigest\s*=\s*\)\".*\"/\1\"$redisImageDigest\"/" install/installer/pkg/components/redis/constants.go
           sed -i -e "s/^\(\s*ExporterImageDigest\s*=\s*\)\".*\"/\1\"$redisExporterDigest\"/" install/installer/pkg/components/redis/constants.go
@@ -80,7 +81,7 @@ jobs:
           fi
 
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@923ad837f191474af6b1721408744feb989a4c27 # v4
+        uses: peter-evans/create-pull-request@67ccf781d68cd99b580ae25a5c18a1cc84ffff1f #v7.0.6
         if: ${{ steps.create_pr.outputs.create_pr == 'true' }}
         with:
           token: ${{ secrets.ROBOQUAT_AUTOMATIC_CHANGELOG }}
@@ -109,3 +110,15 @@ jobs:
           labels: automated pr, kind/cleanup, release-note-none
           branch: update-digests
           delete-branch: true
+
+      - name: Get previous job's status
+        id: lastrun
+        uses: filiptronicek/get-last-job-status@main
+      - name: Slack Notification
+        if: ${{ (success() && steps.lastrun.outputs.status == 'failed') || failure() }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.RELEASE_SLACK_WEBHOOK }}
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_TITLE: "Update container images digest"
+          SLACK_FOOTER: "<https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|Workflow logs>"

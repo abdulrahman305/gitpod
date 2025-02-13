@@ -1,6 +1,6 @@
 {
     "result": {
-        "id": "",
+        "id": "dfdd9f48-2176-47b5-9c38-c85d099c8e6d",
         "workspace": {
             "id": "sveneffting-2048intermi-5vb9hvqev88",
             "metadata": {
@@ -87,7 +87,28 @@
         "creationTime": "2024-05-13T07:12:42.536Z",
         "startedTime": "2024-05-13T07:12:45.421Z",
         "stoppingTime": "2024-05-13T07:12:51.802Z",
-        "stoppedTime": "2024-05-13T07:12:52.461Z"
+        "stoppedTime": "2024-05-13T07:12:52.461Z",
+        "metrics": {
+            "workspaceImageSize": "0",
+            "totalImageSize": "0"
+        },
+        "owner": {
+            "id": "123",
+            "name": "Kum Quat",
+            "avatarUrl": ""
+        },
+        "context": {
+            "path": "",
+            "ref": "master",
+            "refType": "REF_TYPE_BRANCH",
+            "revision": "aac9c200a79e37ebe216bb90c829d5ab2771f2ee",
+            "repository": {
+                "cloneUrl": "https://github.com/svenefftinge/2048-in-terminal.git",
+                "host": "github.com",
+                "owner": "svenefftinge",
+                "name": "2048-in-terminal"
+            }
+        }
     },
     "err": ""
 }

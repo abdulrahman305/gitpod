@@ -1,4 +1,4 @@
-// Copyright (c) 2024 Gitpod GmbH. All rights reserved.
+// Copyright (c) 2025 Gitpod GmbH. All rights reserved.
 // Licensed under the GNU Affero General Public License (AGPL).
 // See License.AGPL.txt in the project root for license information.
 
@@ -133,6 +133,24 @@ public class InstallationServiceClient(
     "gitpod.v1.InstallationService/GetOnboardingState",
       io.gitpod.publicapi.v1.Installation.GetOnboardingStateRequest::class,
       io.gitpod.publicapi.v1.Installation.GetOnboardingStateResponse::class,
+      StreamType.UNARY,
+    ),
+  )
+
+
+  /**
+   *  GetInstallationConfiguration returns configuration of the installation.
+   */
+  override suspend
+      fun getInstallationConfiguration(request: Installation.GetInstallationConfigurationRequest,
+      headers: Headers): ResponseMessage<Installation.GetInstallationConfigurationResponse> =
+      client.unary(
+    request,
+    headers,
+    MethodSpec(
+    "gitpod.v1.InstallationService/GetInstallationConfiguration",
+      io.gitpod.publicapi.v1.Installation.GetInstallationConfigurationRequest::class,
+      io.gitpod.publicapi.v1.Installation.GetInstallationConfigurationResponse::class,
       StreamType.UNARY,
     ),
   )

@@ -73,7 +73,7 @@ export const UsageView: FC<UsageViewProps> = ({ attributionId }) => {
         [updatePageParams],
     );
 
-    let errorMessage = useMemo(() => {
+    const errorMessage = useMemo(() => {
         let errorMessage = "";
 
         if (usagePage.error) {
@@ -87,7 +87,7 @@ export const UsageView: FC<UsageViewProps> = ({ attributionId }) => {
         return errorMessage;
     }, [usagePage.error]);
 
-    const usageEntries = usagePage.data?.usageEntriesList || [];
+    const usageEntries = usagePage.data?.usageEntriesList ?? [];
 
     const readableSchedulerDuration = useMemo(() => {
         const intervalMinutes = usagePage.data?.ledgerIntervalMinutes;
@@ -95,7 +95,7 @@ export const UsageView: FC<UsageViewProps> = ({ attributionId }) => {
             return "";
         }
 
-        return `${intervalMinutes} minute${intervalMinutes !== 1 ? "s" : "" }`;
+        return `${intervalMinutes} minute${intervalMinutes !== 1 ? "s" : ""}`;
     }, [usagePage.data]);
 
     return (
@@ -129,7 +129,7 @@ export const UsageView: FC<UsageViewProps> = ({ attributionId }) => {
 
                 <div className="flex flex-col w-full mb-8">
                     <ItemsList className="mt-2 text-gray-400 dark:text-gray-500">
-                        <Item header={false} className="grid grid-cols-12 gap-x-3 bg-gray-100 dark:bg-gray-800">
+                        <Item header={false} className="grid grid-cols-12 gap-x-3 bg-pk-surface-secondary">
                             <ItemField className="col-span-2 my-auto ">
                                 <span>Type</span>
                             </ItemField>
