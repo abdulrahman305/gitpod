@@ -1,5 +1,7 @@
 FROM ubuntu:jammy
 
+ENV REBUILD_TRIGGER=1
+
 ADD https://raw.githubusercontent.com/gitpod-io/workspace-images/main/base/install-packages /usr/bin/install-packages
 RUN chmod +x /usr/bin/install-packages
 
@@ -93,7 +95,7 @@ ARG TARGETOS
 
 # Install dependencies
 USER root
-ARG LEEWAY_VERSION=0.10.6
+ARG LEEWAY_VERSION=0.10.8
 ENV LEEWAY_MAX_PROVENANCE_BUNDLE_SIZE=8388608
 ENV LEEWAY_WORKSPACE_ROOT=/workspace/gitpod
 ENV LEEWAY_REMOTE_CACHE_BUCKET=leeway-cache-dev-3ac8ef5
@@ -336,12 +338,6 @@ RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.3/install.sh |
     && nvm install v${NODE_VERSION} \
     && nvm alias default v${NODE_VERSION}"
 
-# Disable npm/yarn lifecycle scripts by default (security hardening)
-# To allow specific packages, use: npm rebuild <package> or yarn rebuild <package>
-RUN npm config set ignore-scripts true --location=global && \
-    npm config set ignore-scripts true --location=user && \
-    echo 'ignore-scripts true' >> ~/.yarnrc
-
 # Disable npx (security hardening - prevents arbitrary package execution)
 # Remove npx from NVM and replace with stub that prints warning
 RUN rm -f /usr/bin/npx /usr/local/bin/npx && \
@@ -360,6 +356,8 @@ RUN cd /opt/npm-tools && \
         ln -sf "$bin" /usr/local/bin/$(basename "$bin"); \
     done && \
     rm -rf ~/.npm/_cacache
+# Install newer version of "npm" separately, so it's not overshadowed by the version installed by nvm
+RUN ln -sf /opt/npm-tools/node_modules/.bin/npm /usr/local/bin/npm-11.7
 
 ENV PATH=$PATH:/root/.aws-iam:/root/.terraform:/workspace/bin
 

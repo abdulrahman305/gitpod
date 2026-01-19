@@ -107,7 +107,7 @@ jobs:
       cancel-in-progress: ${{ needs.configuration.outputs.is_main_branch == 'false' }}
     runs-on: ubuntu-latest-16-cores
     container:
-      image: eu.gcr.io/gitpod-core-dev/dev/dev-environment:main-gha.34181
+      image: eu.gcr.io/gitpod-dev-artifact/dev/dev-environment:gpl-npm-oidc-support-gha.42
       options: --user root
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # pin@v4
@@ -122,6 +122,7 @@ jobs:
         shell: bash
         env:
           LEEWAY_REMOTE_CACHE_BUCKET: ${{needs.configuration.outputs.leeway_cache_bucket}}
+          LEEWAY_CACHE_UPLOAD_IMMEDIATE: true
         run: |
           leeway build dev/preview/previewctl:cli --cache remote
   infrastructure:
@@ -133,6 +134,9 @@ jobs:
       (needs.configuration.outputs.is_main_branch != 'true') &&
       (needs.configuration.outputs.is_scheduled_run != 'true')
     runs-on: ubuntu-latest
+    container:
+      image: eu.gcr.io/gitpod-dev-artifact/dev/dev-environment:gpl-npm-oidc-support-gha.42
+      options: --user root
     concurrency:
       group: ${{ github.ref == 'refs/heads/main' && github.run_id || github.sha }}-infrastructure
       cancel-in-progress: true
@@ -149,11 +153,9 @@ jobs:
         uses: ./.github/actions/preview-create
         with:
           name: ${{ needs.configuration.outputs.preview_name }}
-          previewctl_hash: ${{ needs.build-previewctl.outputs.previewctl_hash }}
           large_vm: ${{ needs.configuration.outputs.with_large_vm }}
           preemptible: ${{ needs.configuration.outputs.with_preemptible }}
           recreate_vm: ${{ inputs.recreate_vm }}
-          image_repo_base: ${{needs.configuration.outputs.image_repo_base}}/build
 
   build-gitpod:
     name: Build Gitpod
@@ -180,7 +182,7 @@ jobs:
         ports:
           - 6379:6379
     container:
-      image: eu.gcr.io/gitpod-core-dev/dev/dev-environment:main-gha.34181
+      image: eu.gcr.io/gitpod-dev-artifact/dev/dev-environment:gpl-npm-oidc-support-gha.42
       options: --user root
       env:
         DB_HOST: "mysql"
@@ -214,6 +216,7 @@ jobs:
           JAVA_HOME: /home/gitpod/.sdkman/candidates/java/current
           VERSION: ${{needs.configuration.outputs.version}}
           LEEWAY_REMOTE_CACHE_BUCKET: ${{needs.configuration.outputs.leeway_cache_bucket}}
+          LEEWAY_CACHE_UPLOAD_IMMEDIATE: true
           IMAGE_REPO_BASE: ${{needs.configuration.outputs.image_repo_base}}/dev
         shell: bash
         run: |
@@ -254,13 +257,13 @@ jobs:
           VERSION: ${{needs.configuration.outputs.version}}
           PR_NO_CACHE: ${{needs.configuration.outputs.build_no_cache}}
           PR_NO_TEST: ${{needs.configuration.outputs.build_no_test}}
-          NPM_AUTH_TOKEN: "${{ secrets.NPM_AUTH_TOKEN }}"
           PUBLISH_TO_NPM: ${{ needs.configuration.outputs.publish_to_npm == 'true'  || needs.configuration.outputs.is_main_branch == 'true' }}
           JB_MARKETPLACE_PUBLISH_TOKEN: "${{ secrets.JB_MARKETPLACE_PUBLISH_TOKEN }}"
           PUBLISH_TO_JBPM: ${{ needs.configuration.outputs.publish_to_jbmp == 'true'  || needs.configuration.outputs.is_main_branch == 'true' }}
           CODECOV_TOKEN: "${{ secrets.CODECOV_TOKEN }}"
           LEEWAY_REMOTE_CACHE_BUCKET: ${{needs.configuration.outputs.leeway_cache_bucket}}
           IMAGE_REPO_BASE: ${{needs.configuration.outputs.image_repo_base}}/build
+          LEEWAY_CACHE_UPLOAD_IMMEDIATE: true
 
           # SCM tokens for integration tests
           GITPOD_TEST_TOKEN_BITBUCKET: "${{ secrets.GITPOD_TEST_TOKEN_BITBUCKET }}"
@@ -391,41 +394,6 @@ jobs:
         with:
           name: vulnerability-reports
           path: ${{ steps.scan.outputs.leeway_vulnerability_reports_dir }}
-  install-app:
-    runs-on: ubuntu-latest
-    needs: [ configuration, build-gitpod ]
-    environment: branch-build
-    if: ${{ needs.configuration.outputs.is_main_branch == 'true' && needs.configuration.outputs.is_scheduled_run != 'true' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        env: [ staging, production ]
-    steps:
-      - uses: gitpod-io/gh-app-auth@v0.1
-        id: auth
-        with:
-          private-key: ${{ secrets.ACTIONS_APP_PKEY }}
-          app-id: 308947
-          installation-id: 35574470
-      - name: trigger installation
-        uses: actions/github-script@00f12e3e20659f42342b1c0226afda7f7c042325 # pin@v6
-        with:
-          github-token: ${{ steps.auth.outputs.token }}
-          script: |
-            const result = await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: 'gitpod-dedicated',
-              workflow_id: 'install-app.yaml',
-              ref: 'main',
-              inputs: {
-                "version": '${{ needs.configuration.outputs.version }}',
-                "repo": "https://github.com/gitpod-io/gitpod",
-                "commit": "${{github.sha}}",
-                "release": "${{ matrix.env }}",
-                "env": "${{ matrix.env }}"
-              }
-            })
-
   install:
     name: "Install Gitpod"
     needs:
@@ -436,6 +404,9 @@ jobs:
     environment: branch-build
     if: needs.configuration.outputs.is_scheduled_run != 'true'
     runs-on: ubuntu-latest
+    container:
+      image: eu.gcr.io/gitpod-dev-artifact/dev/dev-environment:gpl-npm-oidc-support-gha.42
+      options: --user root
     concurrency:
       group: ${{ github.ref == 'refs/heads/main' && github.run_id || github.sha }}-install
       cancel-in-progress: ${{ needs.configuration.outputs.is_main_branch == 'false' }}
@@ -486,6 +457,9 @@ jobs:
     needs: [ infrastructure, build-previewctl ]
     environment: branch-build
     runs-on: ubuntu-latest
+    container:
+      image: eu.gcr.io/gitpod-dev-artifact/dev/dev-environment:gpl-npm-oidc-support-gha.42
+      options: --user root
     if: needs.configuration.outputs.with_monitoring == 'true' && needs.configuration.outputs.is_scheduled_run != 'true'
     concurrency:
       group: ${{ github.ref == 'refs/heads/main' && github.run_id || github.sha }}-monitoring
@@ -501,9 +475,6 @@ jobs:
       - name: Deploy monitoring satellite to the preview environment
         id: deploy-monitoring-satellite
         uses: ./.github/actions/deploy-monitoring-satellite
-        with:
-          previewctl_hash: ${{ needs.build-previewctl.outputs.previewctl_hash }}
-          image_repo_base: ${{needs.configuration.outputs.image_repo_base}}/build
 
   integration-test:
     name: "Run integration test"
@@ -516,7 +487,7 @@ jobs:
     environment: branch-build
     runs-on: ubuntu-latest
     container:
-      image: eu.gcr.io/gitpod-core-dev/dev/dev-environment:main-gha.34181
+      image: eu.gcr.io/gitpod-dev-artifact/dev/dev-environment:gpl-npm-oidc-support-gha.42
       options: --user root
     if: needs.configuration.outputs.with_integration_tests != '' && needs.configuration.outputs.is_scheduled_run != 'true'
     concurrency:
